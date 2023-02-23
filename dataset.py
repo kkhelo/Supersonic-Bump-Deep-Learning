@@ -23,19 +23,17 @@ class baseDataset(Dataset):
         2. inputsPara : geometry parameters and flow condition in (k, c, d, Mach) order
         3. targets : surface pressure matrix
 
-    ** Dimensionless and offset removal can not apply to the dataset together. ** 
     Args:
-        dataDir : Directory where the dataset is, ex: 'dataset/train'.
+        dataDir : Directory where the dataset is, ex: 'data/demo1'.
         dataChannel : (number of input data channels, number of target data channels).
         preprocessingMode : Choose the preprocessing method, offset removal or dimensionless.
         mode : Taining dataset or testing(evaluation) dataset.
     """
 
-    modeUsage = ('TRAIN', 'TEST', 'DEMO')
+    modeUsage = ('TRAIN', 'VAL', 'TEST', 'DEMO')
 
-    def __init__(self, dataDir:str, mode='TRAIN', caseList = None, res = 256, ratio = 0.8) -> None:
+    def __init__(self, dataDir:str, mode='TRAIN', caseList = None, res = 256, ratio : float = 0.8) -> None:
         super().__init__()
-        self.baseDataDir = dataDir
         self.dataDir = dataDir
         self.caseList = caseList
         self.resolution = res
@@ -43,18 +41,19 @@ class baseDataset(Dataset):
         self.mode = mode.upper()
 
         if self.mode not in self.modeUsage: 
-            raise ValueError(F'Invalid usage mode : {self.mode}, Available Options are (TRAIN, TEST, DEMO)')
+            raise ValueError(F'Invalid usage mode : {self.mode}, Available Options are (TRAIN, VAL, TEST, DEMO)')
 
     def __call__(self):
-        self.loadData()
+        self._getDataList()
+        self.loadData(self._dataList)
 
-        self._getMean()
         if self.mode == self.modeUsage[0]:
-            self._removeOffset()
+            self._getMean()
+        self._removeOffset()
 
-        self._getNormFactor()
         if self.mode == self.modeUsage[0]:
-            self._normalization()
+            self._getNormFactor()
+        self._normalization()
 
     def __len__(self):
         return self.__length
@@ -62,21 +61,21 @@ class baseDataset(Dataset):
     def __getitem__(self, index):
         return self.inputsMask[index], self.inputsPara[index], self.targets[index]
 
-    def _getCaseList(self) -> None:
+    def _getDataList(self) -> None:
         # Use given caseList
         if self.caseList : 
             try :
-                caseList = np.load(self.caseList)
-                self.__traList = caseList['tra']
-                self.__valList = caseList['val']
-                self.ratio = caseList['ratio']
-                return
+                if self.ratio == float(np.load(self.caseList)['ratio'][0]) : 
+                    temp = np.load(self.caseList)['tra']
+                    self.__trainList = []
+                    for case in temp :
+                        self.__trainList.append(str(case))
+                    self._dataList = self.__trainList
+                    return
             except:
-                if self.caseList is list : 
-                    self.__traList, self.__valList = self.caseList
-                raise ValueError(f'Unkown case list {self.caseList}, should be path to the list file or list(file path).')
+                raise ValueError(f'Unkown case list {self.caseList}, should be a path to the list file.')
 
-        geometry = glob.glob(os.path.join(self.baseDataDir, '*'))
+        geometry = glob.glob(os.path.join(self.dataDir, '*'))
         caseList = []
         for geo in geometry :
             caseList += glob.glob(os.path.join(geo, '*'))
@@ -85,26 +84,37 @@ class baseDataset(Dataset):
         np.random.shuffle(caseList)
         sepPoint = int(length*self.ratio)
 
-        self.__traList = caseList[:sepPoint+1]
+        self.__trainList = caseList[:sepPoint+1]
         self.__valList = caseList[sepPoint+1:]
-        self.__length = len(self.__traList)
         ratio = np.array([self.ratio])
 
         # Save fileList with non-repeat name to base directory
         count = 1
-        temp = os.path.join(self.baseDataDir, 'caseList1.npz')
+        temp = os.path.join(self.dataDir, 'caseList1.npz')
         while os.path.exists(temp):
             temp.replace(f'List{count}', f'List1{count+1}')
             count += 1
 
-        np.savez_compressed(temp, tra=self.__traList, val=self.__valList, ratio=ratio)
+        np.savez_compressed(temp, tra=self.__trainList, val=self.__valList, ratio=ratio)
+        self._dataList = self.__trainList
+        self.caseList = temp
 
-    def loadData(self):
+    def loadData(self, dataList):
 
-        self._getCaseList()
+        self.__length = len(dataList)
+
+        
+        # tempList = dataList.copy()
+        # newList = []
+        # for case in tempList:
+        #     newList.append(str(case))
+
+        # print(type(newList))
+        # print(type(newList[0]), newList[0])
+        # print(os.path.join(newList[0], os.listdir(newList[0])[0], 'bumpSurfaceData.npz'))
 
         # Check if resolution is correct or not
-        src = os.path.join(self.__traList[0], os.listdir(self.__traList[0])[0], 'bumpSurfaceData.npz')
+        src = os.path.join(dataList[0], os.listdir(dataList[0])[0], 'bumpSurfaceData.npz')
         temp = np.load(src)['heights']
         if temp.shape[0] - self.resolution:
             raise ValueError(f"Resolution doesn't math\t\n CFD data : {temp.shape[0]}\t\n Given value : {self.resolution}")
@@ -113,7 +123,7 @@ class baseDataset(Dataset):
         self.targets = np.zeros((self.__length, 1, self.resolution, self.resolution))
         self.inputsPara = np.zeros((self.__length, 1, 4))
 
-        for i, case in enumerate(self.__traList):
+        for i, case in enumerate(dataList):
             src = os.path.join(case, os.listdir(case)[0], 'bumpSurfaceData.npz')
             temp = np.load(src)
             self.inputsMask[i, 0] = temp['heights']
@@ -173,10 +183,72 @@ class baseDataset(Dataset):
         for i in range(self.tarChannels):
             self.targets[:,i,:,:] /= self.tarNorm[i]
 
+    def recover(self, inputsMask, targets, virtual : bool = False):
+        """
+        function use to recover true data from normalized data
+        * virtual argument is used for method overload, prevent value return before further calculation
+        """
+
+        inputsMaskCopy, targetsCopy  = inputsMask.copy(), targets.copy()
+        for i in range(self.inChannels):
+            inputsMaskCopy[i] *= self.inNorm[i]
+
+        for i in range(self.tarChannels):
+            targetsCopy[i] *= self.tarNorm[i]
+
+        inOffsetMap = np.ones(self.inChannels, self.resolution, self.resolution)
+        for i in range(self.inChannels):
+            inOffsetMap[i] *= self.inOffset[i]
+        inputsMaskCopy += inOffsetMap
+        
+        tarOffsetMap = np.ones(self.tarChannels, self.resolution, self.resolution)
+        for i in range(self.tarChannels):
+            tarOffsetMap[i] *= self.tarOffset[i]
+        targetsCopy += tarOffsetMap
+
+        if not virtual : 
+            return inputsMaskCopy, targetsCopy
+
+
+class valBaseDataset(baseDataset):
+    """
+    Validation base dataset derived from base dataset
+    This base class provide : 
+        1. basic preprocessing method using factor from train database
+        2. call function SOP 
+
+    Return data in sequence:
+        1. inputsMask : bump surface heights matrix
+        2. inputsPara : geometry parameters and flow condition in (k, c, d, Mach) order
+        3. targets : surface pressure matrix
+
+    Args:
+        trainDataset : train dataset class object 
+    """
+
+    def __init__(self, trainDataset:baseDataset) -> None:
+        super().__init__(dataDir=trainDataset.dataDir, mode='VAL', caseList=trainDataset.caseList, res=trainDataset.resolution)
+        self.inNorm = trainDataset.inNorm
+        self.tarNorm = trainDataset.tarNorm
+        self.inOffset = trainDataset.inOffset
+        self.tarOffset = trainDataset.tarOffset
+        self.inChannels = trainDataset.inChannels
+        self.tarChannels = trainDataset.tarChannels
+    
+    def _getDataList(self) -> None:
+        temp = np.load(self.caseList)['val']
+        self.__valList = []
+        for case in temp :
+            self.__valList.append(str(case))
+        self._dataList = self.__valList
+
+
 if __name__ == '__main__':
     # a = childClass('data/demoData224')
-    a = baseDataset('data/demoData256POINT')
-    a(resolution=256)
+    tra = baseDataset('data/demoData256POINT', caseList='data/demoData256POINT/caseList1.npz')
+    tra()
+    val = valBaseDataset(tra)
+    val()
     # b, c, d = a[0]
     # print(b)
     # print(a.mode)
