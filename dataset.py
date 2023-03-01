@@ -7,7 +7,7 @@ Date : 2023-02-21
 """
 
 import numpy as np
-import glob, os
+import glob, os, time
 from torch.utils.data import Dataset
 
 
@@ -25,9 +25,12 @@ class baseDataset(Dataset):
 
     Args:
         dataDir : Directory where the dataset is, ex: 'data/demo1'.
-        dataChannel : (number of input data channels, number of target data channels).
-        preprocessingMode : Choose the preprocessing method, offset removal or dimensionless.
         mode : Taining dataset or testing(evaluation) dataset.
+        caseList : npz file path, ignored at first time or reorder. 
+        res : resolution, raise error when imcompatible with data.
+        ratio : ratio of training data to validation data.
+        workers : number of processor in processing.
+        
     """
 
     modeUsage = ('TRAIN', 'VAL', 'TEST', 'DEMO')
@@ -42,18 +45,33 @@ class baseDataset(Dataset):
 
         if self.mode not in self.modeUsage: 
             raise ValueError(F'Invalid usage mode : {self.mode}, Available Options are (TRAIN, VAL, TEST, DEMO)')
+        
+        print('Start training dataset procedure : ')
 
     def __call__(self):
+        
+        # get case list
         self._getDataList()
-        self.loadData(self._dataList)
 
+        # load data
+        start = last = time.time()
+        print('*** Start data loading step ***')
+        self.loadData(self._dataList)
+        print(f'*** Data loading step completed in {(time.time() - last):.2f} seconds ***')
+
+        last = time.time()
+        print('*** Start offset removal step ***')
         if self.mode == self.modeUsage[0]:
             self._getMean()
         self._removeOffset()
+        print(f'*** Offset removal step completed in {(time.time()-last):.2f} seconds ***')
 
+        last = time.time()
+        print('** Start normallization step ***') 
         if self.mode == self.modeUsage[0]:
             self._getNormFactor()
         self._normalization()
+        print(f'*** Normalization step completed in {(time.time()-last):.2f} seconds ***')
 
     def __len__(self):
         return self.__length
@@ -92,9 +110,9 @@ class baseDataset(Dataset):
         count = 1
         temp = os.path.join(self.dataDir, 'caseList1.npz')
         while os.path.exists(temp):
-            temp.replace(f'List{count}', f'List1{count+1}')
             count += 1
-
+            temp = os.path.join(self.dataDir, f'caseList{count}.npz')
+            
         np.savez_compressed(temp, tra=self.__trainList, val=self.__valList, ratio=ratio)
         self._dataList = self.__trainList
         self.caseList = temp
@@ -102,16 +120,6 @@ class baseDataset(Dataset):
     def loadData(self, dataList):
 
         self.__length = len(dataList)
-
-        
-        # tempList = dataList.copy()
-        # newList = []
-        # for case in tempList:
-        #     newList.append(str(case))
-
-        # print(type(newList))
-        # print(type(newList[0]), newList[0])
-        # print(os.path.join(newList[0], os.listdir(newList[0])[0], 'bumpSurfaceData.npz'))
 
         # Check if resolution is correct or not
         src = os.path.join(dataList[0], os.listdir(dataList[0])[0], 'bumpSurfaceData.npz')
@@ -121,10 +129,12 @@ class baseDataset(Dataset):
         
         self.inputsMask = np.zeros((self.__length, 1, self.resolution, self.resolution))
         self.targets = np.zeros((self.__length, 1, self.resolution, self.resolution))
-        self.inputsPara = np.zeros((self.__length, 1, 4))
+        self.inputsPara = np.zeros((self.__length, 1, 4)) 
 
-        for i, case in enumerate(dataList):
+        for i in range(len(dataList)):
+            case = dataList[i]
             src = os.path.join(case, os.listdir(case)[0], 'bumpSurfaceData.npz')
+            
             temp = np.load(src)
             self.inputsMask[i, 0] = temp['heights']
             self.targets[i, 0] = temp['pressure']
@@ -147,11 +157,11 @@ class baseDataset(Dataset):
             self.inOffset += np.sum(self.inputsMask[i,0])
             self.tarOffset += np.sum(self.targets[i,0])
 
-        print(f' Input offset : {self.inOffset}')
-        print(f' Target offset : {self.tarOffset}')
+        self.inOffset /= [(self.__length*self.resolution**2)]
+        self.tarOffset /= [(self.__length*self.resolution**2)]
 
-        self.inOffset = [self.inOffset / self.__length]
-        self.tarOffset = [self.tarOffset / self.__length]
+        print(f' Input offset : {self.inOffset[0]}')
+        print(f' Target offset : {self.tarOffset[0]}')
 
     def _removeOffset(self):
         inOffsetMap = np.ones((self.inChannels, self.resolution, self.resolution))
@@ -244,12 +254,9 @@ class valBaseDataset(baseDataset):
 
 
 if __name__ == '__main__':
-    # a = childClass('data/demoData224')
-    tra = baseDataset('data/demoData256POINT', caseList='data/demoData256POINT/caseList1.npz')
+    # tra = baseDataset('data/testData', caseList='data/testData/caseList1.npz', res=224)
+    tra = baseDataset('data/testData', res=224)
     tra()
-    val = valBaseDataset(tra)
-    val()
-    # b, c, d = a[0]
-    # print(b)
-    # print(a.mode)
+    # val = valBaseDataset(tra)
+    # val()
     
