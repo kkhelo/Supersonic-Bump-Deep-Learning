@@ -45,33 +45,6 @@ class baseDataset(Dataset):
 
         if self.mode not in self.modeUsage: 
             raise ValueError(F'Invalid usage mode : {self.mode}, Available Options are (TRAIN, VAL, TEST, DEMO)')
-        
-        print('Start training dataset procedure : ')
-
-    def __call__(self):
-        
-        # get case list
-        self._getDataList()
-
-        # load data
-        start = last = time.time()
-        print('*** Start data loading step ***')
-        self.loadData(self._dataList)
-        print(f'*** Data loading step completed in {(time.time() - last):.2f} seconds ***')
-
-        last = time.time()
-        print('*** Start offset removal step ***')
-        if self.mode == self.modeUsage[0]:
-            self._getMean()
-        self._removeOffset()
-        print(f'*** Offset removal step completed in {(time.time()-last):.2f} seconds ***')
-
-        last = time.time()
-        print('** Start normallization step ***') 
-        if self.mode == self.modeUsage[0]:
-            self._getNormFactor()
-        self._normalization()
-        print(f'*** Normalization step completed in {(time.time()-last):.2f} seconds ***')
 
     def __len__(self):
         return self.__length
@@ -81,6 +54,8 @@ class baseDataset(Dataset):
 
     def _getDataList(self) -> None:
         # Use given caseList
+        print('Start training dataset procedure : ')
+
         if self.caseList : 
             try :
                 if self.ratio == float(np.load(self.caseList)['ratio'][0]) : 
@@ -117,6 +92,31 @@ class baseDataset(Dataset):
         self._dataList = self.__trainList
         self.caseList = temp
 
+    def preprocessing(self):
+        
+        # get case list
+        self._getDataList()
+
+        # load data
+        start = last = time.time()
+        print('*** Start data loading step ***')
+        self.loadData(self._dataList)
+        print(f'*** Data loading step completed in {(time.time() - last):.2f} seconds ***\n')
+
+        last = time.time()
+        print('*** Start offset removal step ***')
+        if self.mode == self.modeUsage[0]:
+            self._getMean()
+        self._removeOffset()
+        print(f'*** Offset removal step completed in {(time.time()-last):.2f} seconds ***\n')
+
+        last = time.time()
+        print('** Start normallization step ***') 
+        if self.mode == self.modeUsage[0]:
+            self._getNormFactor()
+        self._normalization()
+        print(f'*** Normalization step completed in {(time.time()-last):.2f} seconds ***\n')
+
     def loadData(self, dataList):
 
         self.__length = len(dataList)
@@ -129,7 +129,8 @@ class baseDataset(Dataset):
         
         self.inputsMask = np.zeros((self.__length, 1, self.resolution, self.resolution))
         self.targets = np.zeros((self.__length, 1, self.resolution, self.resolution))
-        self.inputsPara = np.zeros((self.__length, 1, 4)) 
+        self.inputsPara = np.zeros((self.__length, 4)) 
+        # self.inputsPara = np.zeros((self.__length, 4, 1, 1)) 
 
         for i in range(len(dataList)):
             case = dataList[i]
@@ -144,7 +145,7 @@ class baseDataset(Dataset):
             Mach = float(temp[-1])
             temp = temp[-2].split('_')
             k, c, d = float(temp[0].split('k')[-1]), float(temp[1].split('c')[-1]), float(temp[2].split('d')[-1])
-            self.inputsPara[i, 0] = np.array([k, c, d, Mach])
+            self.inputsPara[i] = np.array([k, c, d, Mach])
 
     def _getMean(self):
         
@@ -193,31 +194,33 @@ class baseDataset(Dataset):
         for i in range(self.tarChannels):
             self.targets[:,i,:,:] /= self.tarNorm[i]
 
-    def recover(self, inputsMask, targets, virtual : bool = False):
+    def recover(self, inputsMask, targets, pred = None, virtual : bool = False):
         """
         function use to recover true data from normalized data
         * virtual argument is used for method overload, prevent value return before further calculation
         """
 
-        inputsMaskCopy, targetsCopy  = inputsMask.copy(), targets.copy()
+        inputsMaskCopy, targetsCopy, pred = inputsMask.copy(), targets.copy(), pred.copy()
         for i in range(self.inChannels):
             inputsMaskCopy[i] *= self.inNorm[i]
 
         for i in range(self.tarChannels):
             targetsCopy[i] *= self.tarNorm[i]
+            pred[i] *= self.tarNorm[i]
 
-        inOffsetMap = np.ones(self.inChannels, self.resolution, self.resolution)
+        inOffsetMap = np.ones((self.inChannels, self.resolution, self.resolution))
         for i in range(self.inChannels):
             inOffsetMap[i] *= self.inOffset[i]
         inputsMaskCopy += inOffsetMap
         
-        tarOffsetMap = np.ones(self.tarChannels, self.resolution, self.resolution)
+        tarOffsetMap = np.ones((self.tarChannels, self.resolution, self.resolution))
         for i in range(self.tarChannels):
             tarOffsetMap[i] *= self.tarOffset[i]
         targetsCopy += tarOffsetMap
+        pred += tarOffsetMap
 
         if not virtual : 
-            return inputsMaskCopy, targetsCopy
+            return inputsMaskCopy, targetsCopy, pred
 
 
 class valBaseDataset(baseDataset):
@@ -246,17 +249,54 @@ class valBaseDataset(baseDataset):
         self.tarChannels = trainDataset.tarChannels
     
     def _getDataList(self) -> None:
+        print('Start validation dataset procedure : ')
+
         temp = np.load(self.caseList)['val']
         self.__valList = []
         for case in temp :
             self.__valList.append(str(case))
         self._dataList = self.__valList
 
+class testBaseDataset(baseDataset):
+    """
+    Validation base dataset derived from base dataset
+    This base class provide : 
+        1. basic preprocessing method using factor from train database
+        2. call function SOP 
 
+    Return data in sequence:
+        1. inputsMask : bump surface heights matrix
+        2. inputsPara : geometry parameters and flow condition in (k, c, d, Mach) order
+        3. targets : surface pressure matrix
+
+    Args:
+        trainDataset : train dataset class object 
+    """
+    def __init__(self, dataDir, trainDataset:baseDataset) -> None:
+        super().__init__(dataDir=dataDir, mode='TEST', caseList=None, res=trainDataset.resolution)
+        self.inNorm = trainDataset.inNorm
+        self.tarNorm = trainDataset.tarNorm
+        self.inOffset = trainDataset.inOffset
+        self.tarOffset = trainDataset.tarOffset
+        self.inChannels = trainDataset.inChannels
+        self.tarChannels = trainDataset.tarChannels
+
+    def _getDataList(self) -> None:
+        print('Start testing dataset procedure : ')
+
+        geometry = glob.glob(os.path.join(self.dataDir, '*'))
+        caseList = []
+        for geo in geometry :
+            caseList += glob.glob(os.path.join(geo, '*'))
+
+        self._dataList = caseList
+
+        
 if __name__ == '__main__':
     # tra = baseDataset('data/testData', caseList='data/testData/caseList1.npz', res=224)
-    tra = baseDataset('data/testData', res=224)
-    tra()
-    # val = valBaseDataset(tra)
-    # val()
+    tra = baseDataset('data/demoData256', caseList='data/demoData256/caseList1.npz', res=256)
+    tra.preprocessing()
+    val = valBaseDataset(tra)
+    val.preprocessing()
+    np.save('pressure', val.targets)
     
