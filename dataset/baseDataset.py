@@ -1,6 +1,6 @@
 """
 name : dataset.py
-usage : dataset class implementation
+usage : base dataset class implementation
 author : Bo-Yuan You
 Date : 2023-02-21
 
@@ -15,8 +15,8 @@ class baseDataset(Dataset):
     """
     Base class for bump simulation data, include data processing.
     This base class provide : 
-        1. basic preprocessing method
-        2. call function SOP 
+        1. basic preprocessing method (package as preprocessing())
+        2. recover true value function (recover())
 
     Return data in sequence:
         1. inputsMask : bump surface heights matrix
