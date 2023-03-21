@@ -49,7 +49,7 @@ class baseDataset(Dataset):
         return self.__length
 
     def __getitem__(self, index):
-        return self.inputsMask[index], self.inputsPara[index], self.targets[index]
+        return self.inputsMask[index], self.inputsPara[index], self.targets[index], self.binaryMask[index]
 
     def _getDataList(self) -> None:
         # Use given caseList
@@ -208,7 +208,7 @@ class baseDataset(Dataset):
                 tarOffsetMapToMultiplyBack[np.where(self.binaryMask[i,0]==1)] *= self.tarNorm[j]
                 self.targets[i,j] *= tarOffsetMapToMultiplyBack
 
-    def recover(self, inputsMaskCopy, targetsCopy, predCopy, addBackMaskCopy):
+    def recover(self, inputsMaskCopy, targetsCopy, predCopy, binarymask):
         """
         function use to recover true data from normalized data
         * virtual argument is used for method overload, prevent value return before further calculation
@@ -219,7 +219,7 @@ class baseDataset(Dataset):
 
         for i in range(self.tarChannels):
             tarOffsetMapToMultiplyBack = np.ones((self.resolution, self.resolution))
-            tarOffsetMapToMultiplyBack[np.where(addBackMaskCopy==0)] *= self.tarNorm[i]
+            tarOffsetMapToMultiplyBack[np.where(binarymask[0]==0)] *= self.tarNorm[i]
 
             targetsCopy[i] *= tarOffsetMapToMultiplyBack
             predCopy[i] *= tarOffsetMapToMultiplyBack
@@ -231,7 +231,7 @@ class baseDataset(Dataset):
         
         for i in range(self.tarChannels):
             tarOffsetMap = np.zeros((self.resolution, self.resolution))
-            tarOffsetMap[np.where(addBackMaskCopy==0)] = self.tarOffset[i]
+            tarOffsetMap[np.where(binarymask[0]==0)] = self.tarOffset[i]
 
             targetsCopy[i] += tarOffsetMap
             predCopy[i] += tarOffsetMap
@@ -313,11 +313,11 @@ if __name__ == '__main__':
     val = valBaseDataset(tra)
     val.preprocessing()
 
-    inputsMask, *_, targets = val[10]
+    inputsMask, _, targets, binaryMask = val[10]
     
 
     inputsMaskCopy, targetsCopy, pred  = inputsMask.copy(), targets.copy(), targets.copy()
-    val.recover(inputsMaskCopy, targetsCopy, pred, np.zeros((256, 256)))
+    val.recover(inputsMaskCopy, targetsCopy, pred, binaryMask)
 
     import matplotlib.pyplot as plt
 
