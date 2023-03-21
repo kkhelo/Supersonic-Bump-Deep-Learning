@@ -29,7 +29,6 @@ class baseDataset(Dataset):
         caseList : npz file path, ignored at first time or reorder. 
         res : resolution, raise error when imcompatible with data.
         ratio : ratio of training data to validation data.
-        workers : number of processor in processing.
         
     """
 
@@ -116,6 +115,7 @@ class baseDataset(Dataset):
             self._getNormFactor()
         self._normalization()
         print(f'*** Normalization step completed in {(time.time()-last):.2f} seconds ***\n')
+        print(f'\n**** Total time elapsed : {(time.time()-last):.2f} seconds ****\n')
 
     def loadData(self, dataList):
 
@@ -128,6 +128,7 @@ class baseDataset(Dataset):
             raise ValueError(f"Resolution doesn't math\t\n CFD data : {temp.shape[0]}\t\n Given value : {self.resolution}")
         
         self.inputsMask = np.zeros((self.__length, 1, self.resolution, self.resolution))
+        self.binaryMask = np.zeros((self.__length, 1, self.resolution, self.resolution))
         self.targets = np.zeros((self.__length, 1, self.resolution, self.resolution))
         self.inputsPara = np.zeros((self.__length, 4)) 
         # self.inputsPara = np.zeros((self.__length, 4, 1, 1)) 
@@ -177,15 +178,21 @@ class baseDataset(Dataset):
             self.inputsMask[i] -= inOffsetMap
             self.targets[i] -= tarOffsetMap
 
+        # Add value back in mask region
+        for i in range(self.__length):
+            for j in range(self.tarChannels):
+                tarOffsetMapToAddBack = self.tarOffset[j] * self.binaryMask[i,0]
+                self.targets[i, j] += tarOffsetMapToAddBack
+
     def _getNormFactor(self):
         self.inNorm = np.max(np.abs(self.inputsMask[:,0,:,:]))
         self.tarNorm = np.max(np.abs(self.targets[:,0,:,:]))
 
-        print(f' Input scale factor : {self.inNorm}')
-        print(f' Target scale factor : {self.tarNorm}')
-
         self.inNorm = [self.inNorm]
         self.tarNorm = [self.tarNorm]
+
+        print(f' Input scale factor : {self.inNorm[0]}')
+        print(f' Target scale factor : {self.tarNorm[0]}')
 
     def _normalization(self):
         for i in range(self.inChannels):
@@ -194,33 +201,40 @@ class baseDataset(Dataset):
         for i in range(self.tarChannels):
             self.targets[:,i,:,:] /= self.tarNorm[i]
 
-    def recover(self, inputsMask, targets, pred = None, virtual : bool = False):
+        # Multiply value back in mask region
+        for i in range(self.__length):
+            for j in range(self.tarChannels):
+                tarOffsetMapToMultiplyBack = np.ones((self.resolution, self.resolution))
+                tarOffsetMapToMultiplyBack[np.where(self.binaryMask[i,0]==1)] *= self.tarNorm[j]
+                self.targets[i,j] *= tarOffsetMapToMultiplyBack
+
+    def recover(self, inputsMaskCopy, targetsCopy, predCopy, addBackMaskCopy):
         """
         function use to recover true data from normalized data
         * virtual argument is used for method overload, prevent value return before further calculation
         """
 
-        inputsMaskCopy, targetsCopy, pred = inputsMask.copy(), targets.copy(), pred.copy()
         for i in range(self.inChannels):
             inputsMaskCopy[i] *= self.inNorm[i]
 
         for i in range(self.tarChannels):
-            targetsCopy[i] *= self.tarNorm[i]
-            pred[i] *= self.tarNorm[i]
+            tarOffsetMapToMultiplyBack = np.ones((self.resolution, self.resolution))
+            tarOffsetMapToMultiplyBack[np.where(addBackMaskCopy==0)] *= self.tarNorm[i]
+
+            targetsCopy[i] *= tarOffsetMapToMultiplyBack
+            predCopy[i] *= tarOffsetMapToMultiplyBack
 
         inOffsetMap = np.ones((self.inChannels, self.resolution, self.resolution))
         for i in range(self.inChannels):
             inOffsetMap[i] *= self.inOffset[i]
         inputsMaskCopy += inOffsetMap
         
-        tarOffsetMap = np.ones((self.tarChannels, self.resolution, self.resolution))
         for i in range(self.tarChannels):
-            tarOffsetMap[i] *= self.tarOffset[i]
-        targetsCopy += tarOffsetMap
-        pred += tarOffsetMap
+            tarOffsetMap = np.zeros((self.resolution, self.resolution))
+            tarOffsetMap[np.where(addBackMaskCopy==0)] = self.tarOffset[i]
 
-        if not virtual : 
-            return inputsMaskCopy, targetsCopy, pred
+            targetsCopy[i] += tarOffsetMap
+            predCopy[i] += tarOffsetMap
 
 
 class valBaseDataset(baseDataset):
@@ -294,9 +308,35 @@ class testBaseDataset(baseDataset):
         
 if __name__ == '__main__':
     # tra = baseDataset('data/testData', caseList='data/testData/caseList1.npz', res=224)
-    tra = baseDataset('data/demoData256', caseList='data/demoData256/caseList1.npz', res=256)
+    tra = baseDataset('data/trainingData1', caseList='data/trainingData1/caseList1.npz', res=256)
     tra.preprocessing()
     val = valBaseDataset(tra)
     val.preprocessing()
-    np.save('pressure', val.targets)
+
+    inputsMask, *_, targets = val[10]
     
+
+    inputsMaskCopy, targetsCopy, pred  = inputsMask.copy(), targets.copy(), targets.copy()
+    val.recover(inputsMaskCopy, targetsCopy, pred, np.zeros((256, 256)))
+
+    import matplotlib.pyplot as plt
+
+    plt.figure()
+    plt.contourf(targets[0], levels=200, cmap='jet')
+    plt.colorbar()
+    plt.savefig('nor')
+    plt.close()
+
+    plt.figure()
+    plt.contourf(targetsCopy[0], levels=200, cmap='jet')
+    plt.colorbar()
+    plt.savefig('denor')
+    plt.close()    
+
+    temp = np.load(os.path.join(val._dataList[10], '322/bumpSurfaceData.npz'))['pressure']
+    
+    plt.figure()
+    plt.contourf(temp, levels=200, cmap='jet')
+    plt.colorbar()
+    plt.savefig('ground')
+    plt.close()
