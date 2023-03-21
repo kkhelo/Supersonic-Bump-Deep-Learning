@@ -17,7 +17,7 @@ class DownSamplingblock(nn.Module):
         net = []
         net.append(nn.Conv2d(in_channel, out_channel, kernel_size=4, stride=2, padding=1, bias=True))
         net.append(nn.BatchNorm2d(out_channel))
-        net.append(activation)
+        if activation : net.append(activation)
         
         self.net = nn.Sequential(*net)
 
@@ -34,7 +34,7 @@ class UpSamplingBlock(nn.Module):
         net.append(nn.UpsamplingBilinear2d(scale_factor=2))
         net.append(nn.Conv2d(in_channel, out_channel, kernel_size=3, stride=1, padding=1, bias=True))
         net.append(nn.BatchNorm2d(out_channel))
-        net.append(activation)
+        if activation : net.append(activation)
         
         self.net = nn.Sequential(*net)
 
@@ -77,7 +77,7 @@ class SPUNet(nn.Module):
         maskBottleNeck = []
         maskBottleNeck.append(nn.Linear(channel*16+channel, channel*16))
         maskBottleNeck.append(nn.BatchNorm1d(channel*16))
-        maskBottleNeck.append(activation)
+        if activation : maskBottleNeck.append(activation)
         self.maskBottleNeck = nn.Sequential(*maskBottleNeck)
         
 
@@ -103,7 +103,7 @@ class SPUNet(nn.Module):
         finalLayer.append(nn.BatchNorm2d(channel//2))
         finalLayer.append(nn.Conv2d(channel//2, out_channel, kernel_size=3, stride=1, padding=1, bias=True))
         finalLayer.append(nn.BatchNorm2d(out_channel))
-        finalLayer.append(activation)
+        if activation : finalLayer.append(activation)
         self.finalLayer = nn.Sequential(*finalLayer)
 
 

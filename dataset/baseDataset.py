@@ -22,6 +22,7 @@ class baseDataset(Dataset):
         1. inputsMask : bump surface heights matrix
         2. inputsPara : geometry parameters and flow condition in (k, c, d, Mach) order
         3. targets : surface pressure matrix
+        4. binaryMask : all zero mask, for data processing and recovery. Appears here only for conviniece
 
     Args:
         dataDir : Directory where the dataset is, ex: 'data/demo1'.
@@ -46,7 +47,7 @@ class baseDataset(Dataset):
             raise ValueError(F'Invalid usage mode : {self.mode}, Available Options are (TRAIN, VAL, TEST, DEMO)')
 
     def __len__(self):
-        return self.__length
+        return self._length
 
     def __getitem__(self, index):
         return self.inputsMask[index], self.inputsPara[index], self.targets[index], self.binaryMask[index]
@@ -70,7 +71,10 @@ class baseDataset(Dataset):
         geometry = glob.glob(os.path.join(self.dataDir, '*'))
         caseList = []
         for geo in geometry :
-            caseList += glob.glob(os.path.join(geo, '*'))
+            cases = glob.glob(os.path.join(geo, '*'))
+            for case in cases:
+                if os.listdir(case):
+                    caseList.append(case)
 
         length = len(caseList)
         np.random.shuffle(caseList)
@@ -115,11 +119,11 @@ class baseDataset(Dataset):
             self._getNormFactor()
         self._normalization()
         print(f'*** Normalization step completed in {(time.time()-last):.2f} seconds ***\n')
-        print(f'\n**** Total time elapsed : {(time.time()-last):.2f} seconds ****\n')
+        print(f'\n**** Total time elapsed : {(time.time()-start):.2f} seconds ****\n')
 
     def loadData(self, dataList):
 
-        self.__length = len(dataList)
+        self._length = len(dataList)
 
         # Check if resolution is correct or not
         src = os.path.join(dataList[0], os.listdir(dataList[0])[0], 'bumpSurfaceData.npz')
@@ -127,13 +131,13 @@ class baseDataset(Dataset):
         if temp.shape[0] - self.resolution:
             raise ValueError(f"Resolution doesn't math\t\n CFD data : {temp.shape[0]}\t\n Given value : {self.resolution}")
         
-        self.inputsMask = np.zeros((self.__length, 1, self.resolution, self.resolution))
-        self.binaryMask = np.zeros((self.__length, 1, self.resolution, self.resolution))
-        self.targets = np.zeros((self.__length, 1, self.resolution, self.resolution))
-        self.inputsPara = np.zeros((self.__length, 4)) 
-        # self.inputsPara = np.zeros((self.__length, 4, 1, 1)) 
-
+        self.inputsMask = np.zeros((self._length, 1, self.resolution, self.resolution))
+        self.binaryMask = np.zeros((self._length, 1, self.resolution, self.resolution))
+        self.targets = np.zeros((self._length, 1, self.resolution, self.resolution))
+        self.inputsPara = np.zeros((self._length, 4)) 
+        
         for i in range(len(dataList)):
+            print(f'Loading -- {i+1:d}/{len(dataList)} completed')
             case = dataList[i]
             src = os.path.join(case, os.listdir(case)[0], 'bumpSurfaceData.npz')
             
@@ -155,12 +159,12 @@ class baseDataset(Dataset):
         self.inChannels = 1
         self.tarChannels = 1
 
-        for i in range(self.__length):
+        for i in range(self._length):
             self.inOffset += np.sum(self.inputsMask[i,0])
             self.tarOffset += np.sum(self.targets[i,0])
 
-        self.inOffset /= [(self.__length*self.resolution**2)]
-        self.tarOffset /= [(self.__length*self.resolution**2)]
+        self.inOffset /= [(self._length*self.resolution**2)]
+        self.tarOffset /= [(self._length*self.resolution**2)]
 
         print(f' Input offset : {self.inOffset[0]}')
         print(f' Target offset : {self.tarOffset[0]}')
@@ -174,12 +178,12 @@ class baseDataset(Dataset):
         for i in range(self.tarChannels):
             tarOffsetMap[i] *= self.tarOffset[i]
 
-        for i in range(self.__length):
+        for i in range(self._length):
             self.inputsMask[i] -= inOffsetMap
             self.targets[i] -= tarOffsetMap
 
         # Add value back in mask region
-        for i in range(self.__length):
+        for i in range(self._length):
             for j in range(self.tarChannels):
                 tarOffsetMapToAddBack = self.tarOffset[j] * self.binaryMask[i,0]
                 self.targets[i, j] += tarOffsetMapToAddBack
@@ -202,7 +206,7 @@ class baseDataset(Dataset):
             self.targets[:,i,:,:] /= self.tarNorm[i]
 
         # Multiply value back in mask region
-        for i in range(self.__length):
+        for i in range(self._length):
             for j in range(self.tarChannels):
                 tarOffsetMapToMultiplyBack = np.ones((self.resolution, self.resolution))
                 tarOffsetMapToMultiplyBack[np.where(self.binaryMask[i,0]==1)] *= self.tarNorm[j]
@@ -248,6 +252,7 @@ class valBaseDataset(baseDataset):
         1. inputsMask : bump surface heights matrix
         2. inputsPara : geometry parameters and flow condition in (k, c, d, Mach) order
         3. targets : surface pressure matrix
+        4. binaryMask : all zero mask, for data processing and recovery. Appears here only for conviniece
 
     Args:
         trainDataset : train dataset class object 
@@ -271,6 +276,7 @@ class valBaseDataset(baseDataset):
             self.__valList.append(str(case))
         self._dataList = self.__valList
 
+
 class testBaseDataset(baseDataset):
     """
     Validation base dataset derived from base dataset
@@ -282,9 +288,11 @@ class testBaseDataset(baseDataset):
         1. inputsMask : bump surface heights matrix
         2. inputsPara : geometry parameters and flow condition in (k, c, d, Mach) order
         3. targets : surface pressure matrix
+        4. binaryMask : all zero mask, for data processing and recovery. Appears here only for conviniece
 
     Args:
         trainDataset : train dataset class object 
+        dataDir : test dataset root directory
     """
     def __init__(self, dataDir, trainDataset:baseDataset) -> None:
         super().__init__(dataDir=dataDir, mode='TEST', caseList=None, res=trainDataset.resolution)
@@ -313,7 +321,8 @@ if __name__ == '__main__':
     val = valBaseDataset(tra)
     val.preprocessing()
 
-    inputsMask, _, targets, binaryMask = val[10]
+    index = 10
+    inputsMask, _, targets, binaryMask = val[index]
     
 
     inputsMaskCopy, targetsCopy, pred  = inputsMask.copy(), targets.copy(), targets.copy()
@@ -333,7 +342,10 @@ if __name__ == '__main__':
     plt.savefig('denor')
     plt.close()    
 
-    temp = np.load(os.path.join(val._dataList[10], '322/bumpSurfaceData.npz'))['pressure']
+    temp = glob.glob(os.path.join(val._dataList[index], '*/bumpSurfaceData.npz'))
+    temp = np.load(temp[0])['pressure']
+
+    # temp = np.load(os.path.join(val._dataList[index], '322/bumpSurfaceData.npz'))['pressure']
     
     plt.figure()
     plt.contourf(temp, levels=200, cmap='jet')
