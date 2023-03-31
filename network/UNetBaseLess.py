@@ -64,7 +64,6 @@ class SPUNet(nn.Module):
         self.downLayer5 = DownSamplingblock(channelBase*4, channelBase*4)
         self.downLayer6 = DownSamplingblock(channelBase*4, channelBase*8)
         self.downLayer7 = DownSamplingblock(channelBase*8, channelBase*8)
-        self.downLayer8 = DownSamplingblock(channelBase*8, channelBase*16)
 
         additionalBottleNeck = []
         additionalBottleNeck.append(nn.Linear(inParaLen, channelBase, bias=False))
@@ -73,13 +72,12 @@ class SPUNet(nn.Module):
         self.additionalBottleNeck = nn.Sequential(*additionalBottleNeck)
 
         maskBottleNeck = []
-        maskBottleNeck.append(nn.Linear(channelBase*16+channelBase, channelBase*16, bias=False))
-        maskBottleNeck.append(nn.BatchNorm1d(channelBase*16))
+        maskBottleNeck.append(nn.Linear(channelBase*32+channelBase, channelBase*32, bias=False))
+        maskBottleNeck.append(nn.BatchNorm1d(channelBase*32))
         maskBottleNeck.append(nn.ReLU(inplace=True))
         self.maskBottleNeck = nn.Sequential(*maskBottleNeck)
         
-        self.upLayer8 = UpSamplingBlock(channelBase*16, channelBase*8)
-        self.upLayer7 = UpSamplingBlock(channelBase*16, channelBase*8)
+        self.upLayer7 = UpSamplingBlock(channelBase*8, channelBase*8)
         self.upLayer6 = UpSamplingBlock(channelBase*16, channelBase*4)
         self.upLayer5 = UpSamplingBlock(channelBase*8, channelBase*4)
         self.upLayer4 = UpSamplingBlock(channelBase*8, channelBase*2)
@@ -107,15 +105,17 @@ class SPUNet(nn.Module):
         downOut5 = self.downLayer5(downOut4)
         downOut6 = self.downLayer6(downOut5)
         downOut7 = self.downLayer7(downOut6)
-        downOut8 = self.downLayer8(downOut7)
 
         # Bottleneck
+        
+        size = downOut7.size()
+
         additionalBottleNeck = self.additionalBottleNeck(inPara)
-        maskBottleNeck = self.maskBottleNeck(torch.cat([downOut8.squeeze(2).squeeze(2), additionalBottleNeck], dim=1)).unsqueeze(2).unsqueeze(2)
+        maskBottleNeck = self.maskBottleNeck(torch.cat([downOut7.view(-1, size[1]*size[2]*size[3])
+                                , additionalBottleNeck], dim=1)).view(-1,size[1], size[2], size[3])
 
         # Decoder layer
-        upOut8 = self.upLayer8(maskBottleNeck)
-        upOut7 = self.upLayer7(torch.cat([upOut8, downOut7],1))
+        upOut7 = self.upLayer7(maskBottleNeck)
         upOut6 = self.upLayer6(torch.cat([upOut7, downOut6],1))
         upOuT5 = self.upLayer5(torch.cat([upOut6, downOut5],1))
         upOut4 = self.upLayer4(torch.cat([upOuT5, downOut4],1))

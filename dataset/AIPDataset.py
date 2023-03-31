@@ -19,7 +19,7 @@ class AIPDataset(baseDataset):
 
     Return data in sequence:
         1. inputsMask : bump surface heights matrix
-        2. inputsPara : geometry parameters and flow condition in (Mach, AIP location) order
+        2. inputsPara : geometry parameters and flow condition in (Mach, AIP location, k, c, d) order
         3. targets : AIP data (6, res, res)
         4. binaryMask : AIP geometry mask (1 for solid region, 0 for computational domain)
 
@@ -47,36 +47,38 @@ class AIPDataset(baseDataset):
         self.inputsMask = np.zeros((self._length, 1, self.resolution, self.resolution))
         self.binaryMask = np.zeros((self._length, 1, self.resolution, self.resolution))
         self.targets = np.zeros((self._length, temp.shape[1], self.resolution, self.resolution))
-        
-        # [Mach, AIP Location(x)]
-        self.inputsPara = np.zeros((self._length, 2)) 
+        self.inputsPara = np.zeros((self._length, 5)) 
 
         for i in range(len(dataList)):
-            print(f'Loading -- {i+1:d}/{len(dataList)} completed')
-
+            
             case = dataList[i]
-            bumpSurfaceDataPath = os.path.join(case, os.listdir(case)[0], 'bumpSurfaceData.npz')
-            AIPDataPath = os.path.join(case, os.listdir(case)[0], 'AIPData.npz')
             
             # bump surface
-            bumpSurfaceData = np.load(bumpSurfaceDataPath)
+            bumpSurfaceData = np.load(os.path.join(case, os.listdir(case)[0], 'bumpSurfaceData.npz'))
             heights = bumpSurfaceData['heights']
             self.inputsMask[i, 0] = heights
 
             # AIP data
-            AIPData = np.load(AIPDataPath)
+            AIPData = np.load(os.path.join(case, os.listdir(case)[0], 'AIPData.npz'))
             data, tag, mask = AIPData['AIPData'], AIPData['AIPTags'], AIPData['geoMask']
             tag = np.where(tag=='AIP')[0][0]
             self.binaryMask[i, 0] = mask[tag]
             self.targets[i] = data[tag]
 
             # Extract flow conditions
-            Mach = float(case.split('/')[-1])
+            temp = case.split('/')
+            Mach = float(temp[-1])
 
             # Extract AIP x coordinate
             locationAIP = np.where(heights == np.max(heights))[0][0]*(0.5/self.resolution)
 
-            self.inputsPara[i] = np.array([Mach, locationAIP])
+            temp = temp[-2].split('_')
+            k, c, d = float(temp[0].split('k')[-1]), float(temp[1].split('c')[-1]), float(temp[2].split('d')[-1])
+            
+            # [Mach, AIP Location(x), k, c, d]
+            self.inputsPara[i] = np.array([Mach, locationAIP, k, c, d])
+
+            print(f'Loading -- {i+1:d}/{len(dataList)} completed')
 
     def _getMean(self):
         self.inChannels = 1
@@ -198,24 +200,21 @@ if __name__ == '__main__':
     inputsMask, _, targets, binaryMask = val[index]
     print(inputsMask.shape, targets.shape, binaryMask.shape)
     
+    inputsMaskCopy, targetsCopy, predCopy = inputsMask.copy(), targets.copy(), targets.copy()
+    val.recover(inputsMaskCopy, targetsCopy, predCopy, binaryMask)
 
-    inputsMaskCopy, targetsCopy = inputsMask.copy(), targets.copy()
-    val.recover(inputsMaskCopy, targetsCopy, targetsCopy, binaryMask)
-
-    print(val.tarOffset)
-    print(val.tarNorm)
-    print(val.tarChannels)
+    print(val.inputsPara[index])
 
     import matplotlib.pyplot as plt
 
     plt.figure()
-    plt.contourf(targets[0].transpose(), levels=100, cmap='jet')
+    plt.pcolormesh(targets[0].transpose(), cmap='Reds')
     plt.colorbar()
     plt.savefig('nor')
     plt.close()
 
     plt.figure()
-    plt.contourf(targetsCopy[0].transpose(), levels=100, cmap='jet')
+    plt.pcolormesh(targetsCopy[0].transpose(), cmap='Reds')
     plt.colorbar()
     plt.savefig('denor')
     plt.close()    
@@ -224,8 +223,9 @@ if __name__ == '__main__':
     temp = np.load(temp[0])['AIPData']
     
     plt.figure()
-    plt.contourf(temp[0][0].transpose(), levels=100, cmap='jet')
+    plt.pcolormesh(temp[2][0].transpose(), cmap='Reds')
     plt.colorbar()
     plt.savefig('ground')
     plt.close()
+
     

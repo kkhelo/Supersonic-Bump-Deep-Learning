@@ -18,7 +18,7 @@ class DownSamplingblock(nn.Module):
         self.bn = nn.BatchNorm2d(out_channel)
         self.actf = nn.ReLU(inplace=True) if activation else nn.Identity()
 
-        # if activation : nn.init.kaiming_uniform_(self.conv.weight, mode='fan_in', nonlinearity='relu')
+        if activation : nn.init.kaiming_uniform_(self.conv.weight, mode='fan_in', nonlinearity='relu')
 
     def forward(self, x):
         x = self.conv(x)
@@ -35,7 +35,7 @@ class UpSamplingBlock(nn.Module):
         self.bn = nn.BatchNorm2d(out_channel)
         self.actf = nn.ReLU(inplace=True)if activation else nn.Identity()
 
-        # if activation : nn.init.kaiming_uniform_(self.conv.weight, mode='fan_in', nonlinearity='relu')
+        if activation : nn.init.kaiming_uniform_(self.conv.weight, mode='fan_in', nonlinearity='relu')
 
     def forward(self, x):
         x = self.upsample(x)
@@ -49,7 +49,7 @@ class SPUNet(nn.Module):
     Surface Pressure U-Net (SPUNet)
     U-Net architecture use to predict surface pressure from bump heights matrix.
     """
-    def __init__(self, inChannel, outChannel, inParaLen : int, channelBase = 64, activation = nn.Tanh()) -> None:
+    def __init__(self, inChannel, outChannel, inParaLen : int, channelBase = 64, finalBlockFilters = None, activation = nn.Tanh()) -> None:
         """
         * inChannel, outChannel : number of channels of input and output layer
         * channelBase number of channels in the first block
@@ -85,18 +85,39 @@ class SPUNet(nn.Module):
         self.upLayer4 = UpSamplingBlock(channelBase*8, channelBase*2)
         self.upLayer3 = UpSamplingBlock(channelBase*4, channelBase*2)
         self.upLayer2 = UpSamplingBlock(channelBase*4, channelBase)
-        self.upLayer1 = UpSamplingBlock(channelBase*2, outChannel, activation=False)
-        self.actf = activation
+        
 
-        # nn.init.kaiming_uniform_(self.additionalBottleNeck[0].weight, mode='fan_in', nonlinearity='relu')
-        # nn.init.kaiming_uniform_(self.maskBottleNeck[0].weight, mode='fan_in', nonlinearity='relu')
+        if finalBlockFilters:
+            self.upLayer1 = UpSamplingBlock(channelBase*2, channelBase)
+            finalBlockFilters = [channelBase] + [channelBase//filter for filter in finalBlockFilters] + [outChannel]
+            finalBlock = []
 
-        # if activation == nn.SELU():
-        #     nn.init.normal_(self.upLayer1[1].weight, mean=0, std=(1/channelBase*2 * 3 * 3)**0.5)
-        # elif activation == nn.Tanh():
-        #     nn.init.xavier_uniform_(self.upLayer1[1].weight)
-    
-    
+            for i in range(len(finalBlockFilters)-1):
+                finalBlock.append(nn.Conv2d(finalBlockFilters[i], finalBlockFilters[i+1], kernel_size=3, stride=1, padding=1, bias=False))
+                finalBlock.append(nn.BatchNorm2d(finalBlockFilters[i+1]))
+                finalBlock.append(nn.ReLU())
+                
+                nn.init.kaiming_uniform_(finalBlock[i*3].weight, mode='fan_in', nonlinearity='relu')
+
+            finalBlock[-1] = activation*2 if activation == nn.Tanh() else activation
+
+            if activation == nn.SELU():
+                nn.init.normal_(finalBlock[-3].weight, mean=0, std=(1/finalBlockFilters[-2] * 3 * 3)**0.5)
+            elif activation == nn.Tanh():
+                nn.init.xavier_uniform_(finalBlock[-3].weight)
+
+            self.finalBlock = nn.Sequential(*finalBlock)
+        else:
+            self.upLayer1 = UpSamplingBlock(channelBase*2, outChannel, activation=False)
+            self.finalBlock = activation*2 if activation == nn.Tanh() else activation
+            if activation == nn.SELU():
+                nn.init.normal_(self.upLayer1.conv.weight, mean=0, std=(1/channelBase*2 * 3 * 3)**0.5)
+            elif activation == nn.Tanh():
+                nn.init.xavier_uniform_(self.upLayer1.conv.weight)
+
+        nn.init.kaiming_uniform_(self.additionalBottleNeck[0].weight, mode='fan_in', nonlinearity='relu')
+        nn.init.kaiming_uniform_(self.maskBottleNeck[0].weight, mode='fan_in', nonlinearity='relu')
+
     def forward(self, inMask, inPara):
         
         # Encoder layers
@@ -123,4 +144,4 @@ class SPUNet(nn.Module):
         upOut2 = self.upLayer2(torch.cat([upOut3, downOut2],1))
         upOut1 = self.upLayer1(torch.cat([upOut2, downOut1],1))
       
-        return self.actf(upOut1)
+        return self.finalBlock(upOut1)

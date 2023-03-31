@@ -76,6 +76,7 @@ class baseDataset(Dataset):
                 if os.listdir(case):
                     caseList.append(case)
 
+        # Split data
         length = len(caseList)
         np.random.shuffle(caseList)
         sepPoint = int(length*self.ratio)
@@ -102,23 +103,26 @@ class baseDataset(Dataset):
 
         # load data
         start = last = time.time()
-        print('*** Start data loading step ***')
+        print('*** Start data loading step ***\n')
         self.loadData(self._dataList)
-        print(f'*** Data loading step completed in {(time.time() - last):.2f} seconds ***\n')
+        print(f'\n*** Data loading step completed in {(time.time() - last):.2f} seconds ***\n')
 
         last = time.time()
-        print('*** Start offset removal step ***')
+        print('*** Start offset removal step ***\n')
         if self.mode == self.modeUsage[0]:
             self._getMean()
         self._removeOffset()
-        print(f'*** Offset removal step completed in {(time.time()-last):.2f} seconds ***\n')
+        print(f'\n*** Offset removal step completed in {(time.time()-last):.2f} seconds ***\n')
 
         last = time.time()
-        print('** Start normallization step ***') 
+        print('** Start normallization step ***\n') 
+        
         if self.mode == self.modeUsage[0]:
             self._getNormFactor()
+        
         self._normalization()
-        print(f'*** Normalization step completed in {(time.time()-last):.2f} seconds ***\n')
+        
+        print(f'\n*** Normalization step completed in {(time.time()-last):.2f} seconds ***\n')
         print(f'\n**** Total time elapsed : {(time.time()-start):.2f} seconds ****\n')
 
     def loadData(self, dataList):
@@ -148,23 +152,19 @@ class baseDataset(Dataset):
             # Extract geometry parameters and flow conditions
             temp = case.split('/')
             Mach = float(temp[-1])
+            self.inputsPara[i] = np.array([Mach])
+
             temp = temp[-2].split('_')
             k, c, d = float(temp[0].split('k')[-1]), float(temp[1].split('c')[-1]), float(temp[2].split('d')[-1])
             self.inputsPara[i] = np.array([k, c, d, Mach])
+            # self.inputsPara[i] = np.array([Mach])
 
     def _getMean(self):
-        
-        self.inOffset = 0
-        self.tarOffset = 0
         self.inChannels = 1
         self.tarChannels = 1
 
-        for i in range(self._length):
-            self.inOffset += np.sum(self.inputsMask[i,0])
-            self.tarOffset += np.sum(self.targets[i,0])
-
-        self.inOffset /= [(self._length*self.resolution**2)]
-        self.tarOffset /= [(self._length*self.resolution**2)]
+        self.inOffset = [np.mean(self.inputsMask)]
+        self.tarOffset = [np.mean(self.targets)]
 
         print(f' Input offset : {self.inOffset[0]}')
         print(f' Target offset : {self.tarOffset[0]}')
@@ -189,11 +189,8 @@ class baseDataset(Dataset):
                 self.targets[i, j] += tarOffsetMapToAddBack
 
     def _getNormFactor(self):
-        self.inNorm = np.max(np.abs(self.inputsMask[:,0,:,:]))
-        self.tarNorm = np.max(np.abs(self.targets[:,0,:,:]))
-
-        self.inNorm = [self.inNorm]
-        self.tarNorm = [self.tarNorm]
+        self.inNorm = [np.max(np.abs(self.inputsMask))]
+        self.tarNorm = [np.max(np.abs(self.targets))]
 
         print(f' Input scale factor : {self.inNorm[0]}')
         print(f' Target scale factor : {self.tarNorm[0]}')
@@ -212,10 +209,10 @@ class baseDataset(Dataset):
                 tarOffsetMapToMultiplyBack[np.where(self.binaryMask[i,0]==1)] *= self.tarNorm[j]
                 self.targets[i,j] *= tarOffsetMapToMultiplyBack
 
-    def recover(self, inputsMaskCopy, targetsCopy, predCopy, binarymask):
+    def recover(self, inputsMaskCopy, targetsCopy, predCopy, binaryMask):
         """
         function use to recover true data from normalized data
-        * virtual argument is used for method overload, prevent value return before further calculation
+        size : (channels, H, W)
         """
 
         for i in range(self.inChannels):
@@ -223,7 +220,7 @@ class baseDataset(Dataset):
 
         for i in range(self.tarChannels):
             tarOffsetMapToMultiplyBack = np.ones((self.resolution, self.resolution))
-            tarOffsetMapToMultiplyBack[np.where(binarymask[0]==0)] *= self.tarNorm[i]
+            tarOffsetMapToMultiplyBack[np.where(binaryMask[0]==0)] = self.tarNorm[i]
 
             targetsCopy[i] *= tarOffsetMapToMultiplyBack
             predCopy[i] *= tarOffsetMapToMultiplyBack
@@ -235,11 +232,10 @@ class baseDataset(Dataset):
         
         for i in range(self.tarChannels):
             tarOffsetMap = np.zeros((self.resolution, self.resolution))
-            tarOffsetMap[np.where(binarymask[0]==0)] = self.tarOffset[i]
+            tarOffsetMap[np.where(binaryMask[0]==0)] = self.tarOffset[i]
 
             targetsCopy[i] += tarOffsetMap
             predCopy[i] += tarOffsetMap
-
 
 class valBaseDataset(baseDataset):
     """
@@ -316,7 +312,9 @@ class testBaseDataset(baseDataset):
         
 if __name__ == '__main__':
     # tra = baseDataset('data/testData', caseList='data/testData/caseList1.npz', res=224)
-    tra = baseDataset('data/trainingData1', caseList='data/trainingData1/caseList1.npz', res=256)
+    caseList = 'data/trainingData1/caseList1.npz'
+
+    tra = baseDataset('data/trainingData1', caseList=caseList, res=256)
     tra.preprocessing()
     val = valBaseDataset(tra)
     val.preprocessing()
@@ -324,8 +322,8 @@ if __name__ == '__main__':
     index = 10
     inputsMask, _, targets, binaryMask = val[index]
     
-
     inputsMaskCopy, targetsCopy, pred  = inputsMask.copy(), targets.copy(), targets.copy()
+
     val.recover(inputsMaskCopy, targetsCopy, pred, binaryMask)
 
     import matplotlib.pyplot as plt

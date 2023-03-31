@@ -12,6 +12,10 @@ model
 test*.py
 test
 
+# evlauation data
+AIPUNetEval/
+SPUnetEval/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
