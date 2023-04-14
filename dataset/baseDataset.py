@@ -13,30 +13,29 @@ from torch.utils.data import Dataset
 
 class baseDataset(Dataset):
     """
-    Base class for bump simulation data, include data processing.
-    This base class provide : 
-        1. basic preprocessing method (package as preprocessing())
-        2. recover true value function (recover())
+        Base class for bump simulation data, include data processing.
+        This base class provide : 
+            1. basic preprocessing method (package as preprocessing())
+            2. recover true value function (recover())
 
-    Return data in sequence:
-        1. inputsMask : bump surface heights matrix
-        2. inputsPara : geometry parameters and flow condition in (k, c, d, Mach) order
-        3. targets : surface pressure matrix
-        4. binaryMask : all zero mask, for data processing and recovery. Appears here only for conviniece
+        Return data in sequence:
+            1. inputsMask : bump surface heights matrix
+            2. inputsPara : geometry parameters and flow condition in (k, c, d, Mach) order
+            3. targets : surface pressure matrix
+            4. binaryMask : all zero mask, for data processing and recovery. Appears here only for conviniece
 
-    Args:
-        dataDir : Directory where the dataset is, ex: 'data/demo1'.
-        mode : Taining dataset or testing(evaluation) dataset.
-        caseList : npz file path, ignored at first time or reorder. 
-        res : resolution, raise error when imcompatible with data.
-        ratio : ratio of training data to validation data.
-        
+        Args:
+            dataDir : Directory where the dataset is, ex: 'data/demo1'.
+            mode : Taining dataset or testing(evaluation) dataset.
+            caseList : npz file path, ignored at first time or reorder. 
+            res : resolution, raise error when imcompatible with data.
+            ratio : ratio of training data to validation data.
     """
 
     modeUsage = ('TRAIN', 'VAL', 'TEST', 'DEMO')
 
     def __init__(self, dataDir:str, mode='TRAIN', caseList = None, res = 256, ratio : float = 0.8) -> None:
-        super().__init__()
+        super().__init__() 
         self.dataDir = dataDir
         self.caseList = caseList
         self.resolution = res
@@ -239,19 +238,19 @@ class baseDataset(Dataset):
 
 class valBaseDataset(baseDataset):
     """
-    Validation base dataset derived from base dataset
-    This base class provide : 
-        1. basic preprocessing method using factor from train database
-        2. call function SOP 
+        Validation base dataset derived from base dataset
+        This base class provide : 
+            1. basic preprocessing method using factor from train database
+            2. call function SOP 
 
-    Return data in sequence:
-        1. inputsMask : bump surface heights matrix
-        2. inputsPara : geometry parameters and flow condition in (k, c, d, Mach) order
-        3. targets : surface pressure matrix
-        4. binaryMask : all zero mask, for data processing and recovery. Appears here only for conviniece
+        Return data in sequence:
+            1. inputsMask : bump surface heights matrix
+            2. inputsPara : geometry parameters and flow condition in (k, c, d, Mach) order
+            3. targets : surface pressure matrix
+            4. binaryMask : all zero mask, for data processing and recovery. Appears here only for conviniece
 
-    Args:
-        trainDataset : train dataset class object 
+        Args:
+            trainDataset : train dataset class object 
     """
 
     def __init__(self, trainDataset:baseDataset) -> None:
@@ -275,23 +274,23 @@ class valBaseDataset(baseDataset):
 
 class testBaseDataset(baseDataset):
     """
-    Validation base dataset derived from base dataset
-    This base class provide : 
-        1. basic preprocessing method using factor from train database
-        2. call function SOP 
+        Validation base dataset derived from base dataset
+        This base class provide : 
+            1. basic preprocessing method using factor from train database
+            2. call function SOP 
 
-    Return data in sequence:
-        1. inputsMask : bump surface heights matrix
-        2. inputsPara : geometry parameters and flow condition in (k, c, d, Mach) order
-        3. targets : surface pressure matrix
-        4. binaryMask : all zero mask, for data processing and recovery. Appears here only for conviniece
+        Return data in sequence:
+            1. inputsMask : bump surface heights matrix
+            2. inputsPara : geometry parameters and flow condition in (k, c, d, Mach) order
+            3. targets : surface pressure matrix
+            4. binaryMask : all zero mask, for data processing and recovery. Appears here only for conviniece
 
-    Args:
-        trainDataset : train dataset class object 
-        dataDir : test dataset root directory
+        Args:
+            trainDataset : train dataset class object 
+            dataDir : test dataset root directory
     """
-    def __init__(self, dataDir, trainDataset:baseDataset) -> None:
-        super().__init__(dataDir=dataDir, mode='TEST', caseList=None, res=trainDataset.resolution)
+    def __init__(self, testDataDir, trainDataset:baseDataset) -> None:
+        super().__init__(dataDir=testDataDir, mode='TEST', caseList=None, res=trainDataset.resolution)
         self.inNorm = trainDataset.inNorm
         self.tarNorm = trainDataset.tarNorm
         self.inOffset = trainDataset.inOffset
@@ -313,8 +312,9 @@ class testBaseDataset(baseDataset):
 if __name__ == '__main__':
     # tra = baseDataset('data/testData', caseList='data/testData/caseList1.npz', res=224)
     caseList = 'data/trainingData1/caseList1.npz'
+    caseList = None
 
-    tra = baseDataset('data/trainingData1', caseList=caseList, res=256)
+    tra = baseDataset('data/trainingData', caseList=caseList, res=256)
     tra.preprocessing()
     val = valBaseDataset(tra)
     val.preprocessing()

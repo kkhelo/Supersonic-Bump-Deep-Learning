@@ -15,63 +15,56 @@ from network.UNetBaseFinalBlock import SPUNet
 
 ####### Training settings ########
 
+# Dataset directory.
+dataDir = f'data/trainingData'
+# Dataset case list
+caseList = os.path.join(dataDir, 'caseList1.npz') 
 # scratch 
-scratch = False
+scratch = True
 # Numbers of training epochs
-epochs = 10000
+epochs = 5000
 # Batch size
 batchSize = 16
 # Learning rate
 # lr = 0.001
-# lr = 0.0001
-lr = 0.00001
+lr = 0.0001
+# lr = 0.00001
 # lr = 0.000001
+# expand gradient channels or not 
+# expandGradient = True
+expandGradient = False
 # Inputs channels, outputs channels
-inChannel, out_channel = 1, 6
+inChannel, outChannel = 4 if expandGradient else 1, 6
 # Channel exponent to control network parameters amount
 channelBase = 64
 inParaLen = 5
 # activation
 # activation = af.Swish(0.8)
-# activation = nn.SELU()
-activation = nn.Tanh()
+activation = nn.SELU()
+# activation = nn.Tanh()
 # flinal block
 # finalBlockFilters = None
-finalBlockFilters = [2, 2]
+finalBlockFilters = [2, 4]
+
 
 # number the model
-path = 'log/SummaryWriterLog/AIP/1'
+path = 'log/SummaryWriterLog/AIPUNet/1'
 count = 1
 while os.path.exists(path):
-    path = f'log/SummaryWriterLog/AIP/{count+1:d}'
+    path = f'log/SummaryWriterLog/AIPUNet/{count+1:d}'
     count += 1
 
-# Network　　
+####### Torch and network settings ########
+
 if scratch:
-    network = SPUNet(inChannel=inChannel, outChannel=out_channel, inParaLen=inParaLen, 
+    network = SPUNet(inChannel=inChannel, outChannel=outChannel, inParaLen=inParaLen, 
                      finalBlockFilters=finalBlockFilters, channelBase=channelBase, activation=activation)
 else:
-    network = torch.load(f'model/AIP/{count-1}')
-# network = torch.nn.DataParallel(network)
+    network = torch.load(f'model/AIPUNet/{count-1}')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 network = network.to(device)
 
-# def lecun_normal_(tensor: torch.Tensor) -> torch.Tensor:
-#     input_size = tensor.shape[-2]
-#     std = math.sqrt(1/input_size)
-#     with torch.no_grad():
-#         return tensor.normal_(-std,std)
-    
-# def weights_init(m):
-#     if isinstance(m, nn.Conv2d):
-#         lecun_normal_(m.weight)
-#         nn.init.zeros_(m.bias)
-
-# if scratch and weightInit : network.apply(weights_init)
-
-# CPU maximum number
-cpuMax = 12
-torch.set_num_threads(cpuMax)
+torch.set_num_threads(12)
 # Loss function
 criterion = nn.L1Loss().to(device)
 # Optimizer 
@@ -79,24 +72,29 @@ optimizer = torch.optim.Adam(network.parameters(), lr=lr)
 # Learning rate scheduler
 # scheduler = None
 # scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=lr/10, max_lr=lr, cycle_momentum=False)
-# scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=250, gamma=0.8)
-scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=200, gamma=0.7)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=200, gamma=0.8)
 
 ######## Dataset settings ########
 
-# Dataset directory.
-dataDir = f'data/trainingData1'
-# Dataset usage mode, train or test.
-mode = 'train'
-caseList='data/trainingData1/caseList1.npz'
 # Dataset and the train loader declaration.
-dataset = AIPDataset(dataDir=dataDir, mode=mode, caseList=caseList)
+dataset = AIPDataset(dataDir=dataDir, caseList=caseList, expandGradient=expandGradient)
 dataset.preprocessing()
 trainLoader = DataLoader(dataset, batchSize, shuffle=True, drop_last=True)
 valDataset = valAIPDataset(dataset)
 valDataset.preprocessing()
 valLoader = DataLoader(valDataset, batchSize, shuffle=False)
 
+# directory naming
+dirName = f'evalAIPUNet/net{count}_{lr}lr'
+if scheduler : dirName += f'_{scheduler.__class__.__name__}'
+dirName += f'_{epochs}epochs_bs{batchSize}_{activation.__class__.__name__}_' + dataDir.split('/')[-1]
+if finalBlockFilters:
+    dirName += '_finalBlock'
+    for fileter in finalBlockFilters : dirName += str(fileter)
+
+if expandGradient : dirName += '_expandGradient'
+
+os.makedirs(dirName)
 
 ########## Log settings ##########
 
@@ -151,7 +149,7 @@ def train():
 
     totalTime = (time.time()-startTime)/60
     print(f'Training completed | Total time duration : {totalTime:.2f} minutes')
-    torch.save(network, f'model/AIP/{count}')
+    torch.save(network, f'model/AIPUNet/{count}')
        
 if __name__ == '__main__':
     try :

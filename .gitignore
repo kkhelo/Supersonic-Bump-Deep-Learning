@@ -13,8 +13,8 @@ test*.py
 test
 
 # evlauation data
-AIPUNetEval/
-SPUnetEval/
+evalAIPUNet*/
+evalSPUNet*/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

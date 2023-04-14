@@ -1,5 +1,5 @@
 """
-name : UNet_base.py
+name : UNetBase.py
 usage : U-Net architecture, predict surface pressure from bump height, geometry parameters and flow conditions
 author : Bo-Yuan You
 Date : 2023-03-02
@@ -8,40 +8,7 @@ Date : 2023-03-02
 
 import torch.nn as nn
 import torch
-
-
-class DownSamplingblock(nn.Module):
-    def __init__(self, in_channel, out_channel, activation = True) -> None:
-        super().__init__()
-
-        self.conv = nn.Conv2d(in_channel, out_channel, kernel_size=4, stride=2, padding=1, bias=False)
-        self.bn = nn.BatchNorm2d(out_channel)
-        self.actf = nn.ReLU(inplace=True) if activation else nn.Identity()
-
-        # if activation : nn.init.kaiming_uniform_(self.conv.weight, mode='fan_in', nonlinearity='relu')
-
-    def forward(self, x):
-        x = self.conv(x)
-        x = self.bn(x)
-        return self.actf(x)
-
-
-class UpSamplingBlock(nn.Module):
-    def __init__(self, in_channel, out_channel, activation = True) -> None:
-        super().__init__()
-
-        self.upsample = nn.UpsamplingBilinear2d(scale_factor=2)
-        self.conv = nn.Conv2d(in_channel, out_channel, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn = nn.BatchNorm2d(out_channel)
-        self.actf = nn.ReLU(inplace=True)if activation else nn.Identity()
-
-        # if activation : nn.init.kaiming_uniform_(self.conv.weight, mode='fan_in', nonlinearity='relu')
-
-    def forward(self, x):
-        x = self.upsample(x)
-        x = self.conv(x)
-        x = self.bn(x)
-        return self.actf(x)
+from networkBlock import DownSamplingBlock, UpSamplingBlock
 
 
 class SPUNet(nn.Module):
@@ -57,14 +24,14 @@ class SPUNet(nn.Module):
         """
         super().__init__()
 
-        self.downLayer1 = DownSamplingblock(inChannel  , channelBase)
-        self.downLayer2 = DownSamplingblock(channelBase  , channelBase*2)
-        self.downLayer3 = DownSamplingblock(channelBase*2, channelBase*2)
-        self.downLayer4 = DownSamplingblock(channelBase*2, channelBase*4)
-        self.downLayer5 = DownSamplingblock(channelBase*4, channelBase*4)
-        self.downLayer6 = DownSamplingblock(channelBase*4, channelBase*8)
-        self.downLayer7 = DownSamplingblock(channelBase*8, channelBase*8)
-        self.downLayer8 = DownSamplingblock(channelBase*8, channelBase*16)
+        self.downLayer1 = DownSamplingBlock(inChannel  , channelBase)
+        self.downLayer2 = DownSamplingBlock(channelBase  , channelBase*2)
+        self.downLayer3 = DownSamplingBlock(channelBase*2, channelBase*2)
+        self.downLayer4 = DownSamplingBlock(channelBase*2, channelBase*4)
+        self.downLayer5 = DownSamplingBlock(channelBase*4, channelBase*4)
+        self.downLayer6 = DownSamplingBlock(channelBase*4, channelBase*8)
+        self.downLayer7 = DownSamplingBlock(channelBase*8, channelBase*8)
+        self.downLayer8 = DownSamplingBlock(channelBase*8, channelBase*16)
 
         additionalBottleNeck = []
         additionalBottleNeck.append(nn.Linear(inParaLen, channelBase, bias=False))
