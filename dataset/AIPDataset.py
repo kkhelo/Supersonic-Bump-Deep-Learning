@@ -8,7 +8,7 @@ Date : 2023-03-20
 
 import numpy as np
 import os, glob, scipy
-from baseDataset import baseDataset
+from .baseDataset import baseDataset
 
 class AIPDataset(baseDataset):
     """
@@ -45,10 +45,10 @@ class AIPDataset(baseDataset):
         if temp.shape[-1] - self.resolution:
             raise ValueError(f"Resolution doesn't math\t\n CFD data : {temp.shape[0]}\t\n Given value : {self.resolution}")
         
-        self.inputsMask = np.zeros((self._length, 4 if self.expandGradient else 1, self.resolution, self.resolution))
+        self.inMap = np.zeros((self._length, 4 if self.expandGradient else 1, self.resolution, self.resolution))
         self.binaryMask = np.zeros((self._length, 1, self.resolution, self.resolution))
         self.targets = np.zeros((self._length, temp.shape[1], self.resolution, self.resolution))
-        self.inputsPara = np.zeros((self._length, 5)) 
+        self.inVec = np.zeros((self._length, 5)) 
 
         for i in range(len(dataList)):
             
@@ -57,7 +57,7 @@ class AIPDataset(baseDataset):
             # bump surface
             bumpSurfaceData = np.load(os.path.join(case, os.listdir(case)[0], 'bumpSurfaceData.npz'))
             heights = bumpSurfaceData['heights']
-            self.inputsMask[i, :] = self._calculateGradients(heights) if self.expandGradient else heights
+            self.inMap[i, :] = self._calculateGradients(heights) if self.expandGradient else heights
 
             # AIP data
             AIPData = np.load(os.path.join(case, os.listdir(case)[0], 'AIPData.npz'))
@@ -77,7 +77,7 @@ class AIPDataset(baseDataset):
             k, c, d = float(temp[0].split('k')[-1]), float(temp[1].split('c')[-1]), float(temp[2].split('d')[-1])
             
             # [Mach, AIP Location(x), k, c, d]
-            self.inputsPara[i] = np.array([Mach, locationAIP, k, c, d])
+            self.inVec[i] = np.array([Mach, locationAIP, k, c, d])
 
             print(f'Loading -- {i+1:d}/{len(dataList)} completed')
 
@@ -111,7 +111,7 @@ class AIPDataset(baseDataset):
         return np.array([heightsMapCopy, gradX, gradY, gradMag])
 
     def _getMean(self):
-        self.inChannels = self.inputsMask.shape[1]
+        self.inChannels = self.inMap.shape[1]
         self.tarChannels = self.targets.shape[1]
         self.inOffset = np.zeros((self.inChannels))
         self.tarOffset = np.zeros((self.tarChannels))
@@ -119,14 +119,14 @@ class AIPDataset(baseDataset):
         for i in range(self._length):
             
             for j in range(self.inChannels):
-                self.inOffset[j] += np.sum(self.inputsMask[i,0])/(self.resolution**2*self._length)
+                self.inOffset[j] += np.sum(self.inMap[i,0])/(self.resolution**2*self._length)
             
             validPointAIP = self.resolution**2 - np.sum(self.binaryMask[i,0])
             for j in range(self.tarChannels):
                 self.tarOffset[j] += np.sum(self.targets[i,j])/(validPointAIP*self._length)
 
         print(f' Input offset : ', end='')
-        for i in range(self.inChannels) : print(self.inputsMask[i], end=' ')
+        for i in range(self.inChannels) : print(self.inMap[i], end=' ')
         print()
 
         print(f' Target offset : ', end='')
@@ -138,7 +138,7 @@ class AIPDataset(baseDataset):
         self.tarNorm = np.zeros((self.tarChannels))
 
         for i in range(self.inChannels):
-            self.inNorm[i] = np.max(np.abs(self.inputsMask[:,i,:,:]))
+            self.inNorm[i] = np.max(np.abs(self.inMap[:,i,:,:]))
 
         for i in range(self.tarChannels):
             self.tarNorm[i] = np.max(np.abs(self.targets[:,i,:,:]))
@@ -242,36 +242,36 @@ if __name__ == '__main__':
     index = 48
     physics = 2
 
-    inputsMask, _, targets, binaryMask = val[index]
-    print(inputsMask.shape, targets.shape, binaryMask.shape)
+    inMap, _, targets, binaryMask = val[index]
+    print(inMap.shape, targets.shape, binaryMask.shape)
     
-    inputsMaskCopy, targetsCopy, predCopy = inputsMask.copy(), targets.copy(), targets.copy()
-    val.recover(inputsMaskCopy, targetsCopy, predCopy, binaryMask)
+    inMapCopy, targetsCopy, predCopy = inMap.copy(), targets.copy(), targets.copy()
+    val.recover(inMapCopy, targetsCopy, predCopy, binaryMask)
 
-    print(val.inputsPara[index])
+    print(val.inVec[index])
 
     import matplotlib.pyplot as plt
 
     plt.figure()
-    plt.pcolormesh(inputsMask[0].transpose(), cmap='Greys')
+    plt.pcolormesh(inMap[0].transpose(), cmap='Greys')
     plt.colorbar()
     plt.savefig('heightMap')
     plt.close()
 
     plt.figure()
-    plt.pcolormesh(inputsMask[1].transpose(), cmap='Greys')
+    plt.pcolormesh(inMap[1].transpose(), cmap='Greys')
     plt.colorbar()
     plt.savefig('gradX')
     plt.close()
 
     plt.figure()
-    plt.pcolormesh(inputsMask[2].transpose(), cmap='Greys')
+    plt.pcolormesh(inMap[2].transpose(), cmap='Greys')
     plt.colorbar()
     plt.savefig('gradY')
     plt.close()
 
     plt.figure()
-    plt.pcolormesh(inputsMask[3].transpose(), cmap='Greys')
+    plt.pcolormesh(inMap[3].transpose(), cmap='Greys')
     plt.colorbar()
     plt.savefig('gradMag')
     plt.close()

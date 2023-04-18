@@ -10,21 +10,20 @@ import torch.nn as nn
 import torch
 
 
-class DownSamplingBlock(nn.Module):
-    """
-        Down sampling block for U-net
-    """
-    def __init__(self, inChannels, outChannels, activation = True) -> None:
+class DownsamplingBlock(nn.Module):
+    def __init__(self, inChannels, outChannels, activation = nn.ReLU(inplace=True), bias = True) -> None:
         """
-            Appends ReLU at the end if activation sets to True.
+            * inChannel, outChannel : Number of channels of input and output
+            * activation : Activation module, default is ReLU
+            * bias : Whether to activate bias term
         """
         super().__init__()
 
-        self.conv = nn.Conv2d(inChannels, outChannels, kernel_size=4, stride=2, padding=1, bias=False)
+        self.conv = nn.Conv2d(inChannels, outChannels, kernel_size=4, stride=2, padding=1, bias=bias)
         self.bn = nn.BatchNorm2d(outChannels)
-        self.actf = nn.ReLU(inplace=True) if activation else nn.Identity()
+        self.actf = activation
 
-        if activation : nn.init.kaiming_uniform_(self.conv.weight, mode='fan_in', nonlinearity='relu')
+        if isinstance(activation, nn.ReLU) : nn.init.kaiming_uniform_(self.conv.weight, mode='fan_in', nonlinearity='relu')
 
     def forward(self, x):
         x = self.conv(x)
@@ -32,22 +31,21 @@ class DownSamplingBlock(nn.Module):
         return self.actf(x)
 
 
-class UpSamplingBlock(nn.Module):
-    """
-        Up sampling block for U-net
-    """
-    def __init__(self, in_channel, out_channel, activation = True) -> None:
+class UpsamplingBlock(nn.Module):
+    def __init__(self, inChannels, outChannels, activation = nn.ReLU(inplace=True), bias = True) -> None:
         """
-            Appends ReLU at the end if activation sets to True.
+            * inChannel, outChannel : Number of channels of input and output
+            * activation : Activation module, default is ReLU
+            * bias : Whether to activate bias term
         """
         super().__init__()
 
         self.upsample = nn.UpsamplingBilinear2d(scale_factor=2)
-        self.conv = nn.Conv2d(in_channel, out_channel, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn = nn.BatchNorm2d(out_channel)
-        self.actf = nn.ReLU(inplace=True)if activation else nn.Identity()
+        self.conv = nn.Conv2d(inChannels, outChannels, kernel_size=3, stride=1, padding=1, bias=bias)
+        self.bn = nn.BatchNorm2d(outChannels)
+        self.actf = activation
 
-        if activation : nn.init.kaiming_uniform_(self.conv.weight, mode='fan_in', nonlinearity='relu')
+        if isinstance(activation, nn.ReLU) : nn.init.kaiming_uniform_(self.conv.weight, mode='fan_in', nonlinearity='relu')
 
     def forward(self, x):
         x = self.upsample(x)
@@ -60,13 +58,13 @@ class PAM(nn.Module):
     """ 
         Position attention module (PAM)
     """
-    def __init__(self, inChannels):
+    def __init__(self, inChannels, bias = True):
         super().__init__()
-        self.chanel_in = inChannels
+        self.inChannels = inChannels
 
-        self.queryConv = nn.Conv2d(in_channels=inChannels, out_channels=inChannels//8, kernel_size=1)
-        self.keyConv = nn.Conv2d(in_channels=inChannels, out_channels=inChannels//8, kernel_size=1)
-        self.valueConv = nn.Conv2d(in_channels=inChannels, out_channels=inChannels, kernel_size=1)
+        self.queryConv = nn.Conv2d(in_channels=inChannels, out_channels=inChannels//8, kernel_size=1, bias=bias)
+        self.keyConv = nn.Conv2d(in_channels=inChannels, out_channels=inChannels//8, kernel_size=1, bias=bias)
+        self.valueConv = nn.Conv2d(in_channels=inChannels, out_channels=inChannels, kernel_size=1, bias=bias)
         self.gamma = nn.Parameter(torch.zeros(1))
 
         self.softmax = nn.Softmax(dim=-1)                                                                                                                                                           
@@ -111,9 +109,9 @@ class CAM(nn.Module):
     """ 
         Channel attention module (CAM)
     """
-    def __init__(self, in_dim):
+    def __init__(self, inChannel):
         super().__init__()
-        self.chanel_in = in_dim
+        self.inChannel = inChannel
 
         self.gamma = nn.Parameter(torch.zeros(1))
         self.softmax  = nn.Softmax(dim=-1)
@@ -148,4 +146,4 @@ class CAM(nn.Module):
         # residual
         out = self.gamma*out + x
         
-        return 
+        return out

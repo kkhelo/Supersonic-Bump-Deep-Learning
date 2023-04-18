@@ -5,10 +5,6 @@ Each slice contains 6 flow properties : [p, p0, rho, Ux, Uy, Uz].
 """
 
 import torch, sys, os, glob
-
-sys.path.append('network')
-sys.path.append('dataset')
-
 import torch.nn as nn, numpy as np, matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 from dataset.AIPDataset import AIPDataset, testAIPDataset
@@ -21,7 +17,7 @@ count = sys.argv[1]
 batchSize = 1
 # Network　　
 device = torch.device('cpu')
-model = f'model/AIPUNet/{count}'
+model = f'model/AIP/{count}'
 network = torch.load(model, map_location=device)
 # CPU maximum number
 cpuMax = 12
@@ -30,7 +26,7 @@ torch.set_num_threads(cpuMax)
 try:
     resultFolder = sys.argv[2]
 except:
-    resultFolder = glob.glob(f'evalAIPUNet/net{count}_*')[0]
+    resultFolder = glob.glob(f'result/AIP/net{count}_*')[0]
 print(resultFolder)
 
 expandGradient = 'expandGradient' in resultFolder
@@ -188,4 +184,3 @@ def makeDiffImages(numberOfDemo : int = 1, dataList : list = []):
               
 if __name__ == '__main__':
     evaluate()
-    # print(network)

@@ -13,7 +13,7 @@ count = sys.argv[1]
 batchSize = 1
 # Network　　
 device = torch.device('cpu')
-model = f'model/SPUnet/{count}'
+model = f'model/SP/{count}'
 network = torch.load(model, map_location=device)
 # CPU maximum number
 cpuMax = 12
@@ -22,7 +22,7 @@ torch.set_num_threads(cpuMax)
 try:
     resultFolder = sys.argv[2]
 except:
-    resultFolder = glob.glob(f'evalSPUNet/net{count}*')[0]
+    resultFolder = glob.glob(f'result/SP/net{count}*')[0]
 print(resultFolder)
 
 ######## Dataset settings ########
@@ -130,4 +130,3 @@ def makeDiffImages(numberOfDemo : int = 1, dataList : list = []):
               
 if __name__ == '__main__':
     evaluate()
-    # makeDiffImages()
