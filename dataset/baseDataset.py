@@ -7,7 +7,7 @@ Date : 2023-02-21
 """
 
 import numpy as np
-import glob, os, time
+import glob, os, time, scipy
 from torch.utils.data import Dataset
 
 
@@ -34,13 +34,14 @@ class baseDataset(Dataset):
 
     modeUsage = ('TRAIN', 'VAL', 'TEST', 'DEMO')
 
-    def __init__(self, dataDir:str, mode='TRAIN', caseList = None, res = 256, ratio : float = 0.8) -> None:
+    def __init__(self, dataDir:str, mode='TRAIN', caseList = None, res = 256, ratio : float = 0.8, expandGradient = False) -> None:
         super().__init__() 
         self.dataDir = dataDir
         self.caseList = caseList
         self.resolution = res
         self.ratio = ratio
         self.mode = mode.upper()
+        self.expandGradient = expandGradient
 
         if self.mode not in self.modeUsage: 
             raise ValueError(F'Invalid usage mode : {self.mode}, Available Options are (TRAIN, VAL, TEST, DEMO)')
@@ -134,19 +135,21 @@ class baseDataset(Dataset):
         if temp.shape[0] - self.resolution:
             raise ValueError(f"Resolution doesn't math\t\n CFD data : {temp.shape[0]}\t\n Given value : {self.resolution}")
         
-        self.inMap = np.zeros((self._length, 1, self.resolution, self.resolution))
+        self.inMap = np.zeros((self._length, 4 if self.expandGradient else 1, self.resolution, self.resolution))
         self.binaryMask = np.zeros((self._length, 1, self.resolution, self.resolution))
         self.targets = np.zeros((self._length, 1, self.resolution, self.resolution))
         self.inVec = np.zeros((self._length, 4)) 
         
         for i in range(len(dataList)):
-            print(f'Loading -- {i+1:d}/{len(dataList)} completed')
             case = dataList[i]
-            src = os.path.join(case, os.listdir(case)[0], 'bumpSurfaceData.npz')
             
-            temp = np.load(src)
-            self.inMap[i, 0] = temp['heights']
-            self.targets[i, 0] = temp['pressure']
+            # bump surface
+            bumpSurfaceData = np.load(os.path.join(case, os.listdir(case)[0], 'bumpSurfaceData.npz'))
+            heights = bumpSurfaceData['heights']
+
+            self.inMap[i, :] = self._calculateGradients(heights) if self.expandGradient else heights
+            self.inMap[i, 0] = bumpSurfaceData['heights']
+            self.targets[i, 0] = bumpSurfaceData['pressure']
 
             # Extract geometry parameters and flow conditions
             temp = case.split('/')
@@ -155,17 +158,56 @@ class baseDataset(Dataset):
 
             temp = temp[-2].split('_')
             k, c, d = float(temp[0].split('k')[-1]), float(temp[1].split('c')[-1]), float(temp[2].split('d')[-1])
-            self.inVec[i] = np.array([k, c, d, Mach])
+            self.inVec[i] = np.array([Mach, k, c, d])
 
+            print(f'Loading -- {i+1:d}/{len(dataList)} completed')
+
+    def _calculateGradients(self, heightsMap):
+        """
+            Takes an input array of size (1, H, W) and calculates the
+            x-dir gradient, y-dir gradient and gradient magnitude using Sobel filters. 
+            Concatenate gradient channels to the inputs
+        """
+
+        heightsMapCopy = heightsMap.copy()
+
+        # Calculate the x-dir gradient using a Sobel filter
+        sobelX = np.array([[-1, 0, 1],
+                            [-2, 0, 2],
+                            [-1, 0, 1]])
+        # gradX = np.zeros((self.resolution,self.resolution))
+        gradX = scipy.ndimage.convolve(heightsMapCopy, sobelX)
+
+        # Calculate the y-dir gradient using a Sobel filter
+        sobelY = np.array([[-1, -2, -1],
+                            [ 0,  0,  0],
+                            [ 1,  2,  1]])
+        # gradY = np.zeros((1, self.resolution, self.resolution))
+        gradY = scipy.ndimage.convolve(heightsMapCopy, sobelY)
+
+        # Calculate the gradient magnitude using Euclidean distance
+        gradMag = np.sqrt(gradX**2 + gradY**2)
+
+        # Return [heightsMap, gradX, gradY, gradMag]
+        return np.array([heightsMapCopy, gradX, gradY, gradMag])
+    
     def _getMean(self):
-        self.inChannels = 1
+        self.inChannels = self.inMap.shape[1]
         self.tarChannels = 1
 
-        self.inOffset = [np.mean(self.inMap)]
-        self.tarOffset = [np.mean(self.targets)]
+        self.inOffset = np.zeros((self.inChannels))
+        self.tarOffset = np.zeros((self.tarChannels))
 
-        print(f' Input offset : {self.inOffset[0]}')
-        print(f' Target offset : {self.tarOffset[0]}')
+        for i in range(self.inChannels) : self.inOffset[i] = np.mean(self.inMap[i])
+        for i in range(self.tarChannels) : self.tarOffset[i] = np.mean(self.targets[i])
+
+        print(f' Input offset : ', end='')
+        for i in range(self.inChannels) : print(self.inOffset[i], end=' ')
+        print()
+
+        print(f' Target offset : ', end='')
+        for i in range(self.tarChannels) : print(self.tarOffset[i], end=' ')
+        print()
 
     def _removeOffset(self):
         inOffsetMap = np.ones((self.inChannels, self.resolution, self.resolution))
@@ -187,11 +229,25 @@ class baseDataset(Dataset):
                 self.targets[i, j] += tarOffsetMapToAddBack
 
     def _getNormFactor(self):
-        self.inNorm = [np.max(np.abs(self.inMap))]
-        self.tarNorm = [np.max(np.abs(self.targets))]
+        self.inNorm = np.zeros((self.inChannels))
+        self.tarNorm = np.zeros((self.tarChannels))
 
-        print(f' Input scale factor : {self.inNorm[0]}')
-        print(f' Target scale factor : {self.tarNorm[0]}')
+        for i in range(self.inChannels):
+            self.inNorm[i] = np.max(np.abs(self.inMap[:,i,:,:]))
+
+        for i in range(self.tarChannels):
+            self.tarNorm[i] = np.max(np.abs(self.targets[:,i,:,:]))
+
+        # self.inNorm = [np.max(np.abs(self.inMap))]
+        # self.tarNorm = [np.max(np.abs(self.targets))]
+
+        print(f' Input scale factor : ', end='')
+        for i in range(self.inChannels) : print(self.inNorm[i], end=' ')
+        print()
+
+        print(f' Target scale factor : ', end='')
+        for i in range(self.tarChannels) : print(self.tarNorm[i], end=' ')
+        print()
 
     def _normalization(self):
         for i in range(self.inChannels):
@@ -253,7 +309,8 @@ class valBaseDataset(baseDataset):
     """
 
     def __init__(self, trainDataset:baseDataset) -> None:
-        super().__init__(dataDir=trainDataset.dataDir, mode='VAL', caseList=trainDataset.caseList, res=trainDataset.resolution)
+        super().__init__(dataDir=trainDataset.dataDir, mode='VAL', caseList=trainDataset.caseList, 
+                         res=trainDataset.resolution, expandGradient = trainDataset.expandGradient)
         self.inNorm = trainDataset.inNorm
         self.tarNorm = trainDataset.tarNorm
         self.inOffset = trainDataset.inOffset
@@ -289,7 +346,8 @@ class testBaseDataset(baseDataset):
             dataDir : test dataset root directory
     """
     def __init__(self, testDataDir, trainDataset:baseDataset) -> None:
-        super().__init__(dataDir=testDataDir, mode='TEST', caseList=None, res=trainDataset.resolution)
+        super().__init__(dataDir=testDataDir, mode='TEST', caseList=None, 
+                         res=trainDataset.resolution, expandGradient = trainDataset.expandGradient)
         self.inNorm = trainDataset.inNorm
         self.tarNorm = trainDataset.tarNorm
         self.inOffset = trainDataset.inOffset
@@ -310,10 +368,10 @@ class testBaseDataset(baseDataset):
         
 if __name__ == '__main__':
     # tra = baseDataset('data/testData', caseList='data/testData/caseList1.npz', res=224)
-    caseList = 'data/trainingData1/caseList1.npz'
+    caseList = 'data/trainingData/caseList1.npz'
     caseList = None
 
-    tra = baseDataset('data/trainingData', caseList=caseList, res=256)
+    tra = baseDataset('data/trainingData', caseList=caseList, res=256, expandGradient=True)
     tra.preprocessing()
     val = valBaseDataset(tra)
     val.preprocessing()
@@ -327,6 +385,30 @@ if __name__ == '__main__':
 
     import matplotlib.pyplot as plt
 
+    plt.figure()
+    plt.pcolormesh(inMap[0].transpose(), cmap='Greys')
+    plt.colorbar()
+    plt.savefig('heightMap')
+    plt.close()
+
+    plt.figure()
+    plt.pcolormesh(inMap[1].transpose(), cmap='Greys')
+    plt.colorbar()
+    plt.savefig('gradX')
+    plt.close()
+
+    plt.figure()
+    plt.pcolormesh(inMap[2].transpose(), cmap='Greys')
+    plt.colorbar()
+    plt.savefig('gradY')
+    plt.close()
+
+    plt.figure()
+    plt.pcolormesh(inMap[3].transpose(), cmap='Greys')
+    plt.colorbar()
+    plt.savefig('gradMag')
+    plt.close()
+    
     plt.figure()
     plt.contourf(targets[0], levels=200, cmap='jet')
     plt.colorbar()

@@ -7,13 +7,14 @@ from dataset.AIPDataset import AIPDataset, valAIPDataset
 import torch, network.activatedFunction as af, network.lossFunction as lf
 from network.UNet import UNet
 from network.AE import AE
+from network.AeroConverter import AeroConverter, GlobalEncoderCNN
 
 ####### Training settings ########
 
 dataDir = 'data/trainingData'
 caseList = os.path.join(dataDir, 'caseList1.npz') 
 scratch = True
-epochs = 1
+epochs = 3000
 batchSize = 16
 # lr = 0.001
 lr = 0.0001
@@ -23,11 +24,17 @@ lr = 0.0001
 network = UNet
 # network = AE
 
+converter = AE
+globalEncoder = GlobalEncoderCNN
+network = AeroConverter
+
 # channelFactors = [1, 2, 2, 4, 4, 8, 8, 16]
 channelFactors = [1,2,4,8,16]
+channelFactorsConverter = [1,2,4,8]
 # expandGradient = True
 expandGradient = False
 channelBase = 64
+channelBaseConverter = 32
 # activation = nn.SELU()
 activation = nn.Tanh()
 # flinal blocks
@@ -55,6 +62,8 @@ valLoader = DataLoader(valDataset, batchSize, shuffle=False)
 ####### Torch and network settings ########
 
 inChannel, outChannel = 4 if expandGradient else 1, 6
+outChannelConverter = 1
+
 if scratch:
     if network is AE:
         network = AE(inChannel, outChannel, channelBase, channelFactors, dataset.inVec.shape[1], 
@@ -62,6 +71,12 @@ if scratch:
     elif network is UNet:
         network = UNet(inChannel, outChannel, channelBase, channelFactors, dataset.inVec.shape[1], 
                      finalBlockDivisors, activation, resolution=dataset.inMap.shape[2], bias=True)
+    elif network is AeroConverter:
+        converter = converter(inChannel, outChannelConverter, channelBaseConverter, channelFactorsConverter, 
+                              dataset.inVec.shape[1]-1, activation=nn.ReLU(inplace=True), resolution=dataset.inMap.shape[2], bias=True)
+        globalEncoder = globalEncoder(inChannel, channelBase, channelFactors)
+        network = AeroConverter(outChannel, channelBase, channelFactors, dataset.inVec.shape[1], 
+                     converter, globalEncoder, resolution=dataset.inMap.shape[2], bias=True)
 else:
     network = torch.load(f'model/AIP/{count-1}')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -69,6 +84,7 @@ network = network.to(device)
 
 torch.set_num_threads(12)
 criterion = nn.L1Loss().to(device)
+criterionBinaryMask = nn.BCEWithLogitsLoss()
 optimizer = torch.optim.Adam(network.parameters(), lr=lr)
 # scheduler = None
 # scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=lr/10, max_lr=lr, cycle_momentum=False)
@@ -94,57 +110,123 @@ lossHistoryWriter = SummaryWriter(log_dir=path)
 
 ########## Training script ##########
 
-def train():
+def trainAEorUnet():
     shortPeriodTime= startTime = time.time()
     for epoch in range(epochs):
         print(f'Starting epoch {epoch+1}/{epochs}')
         network.train()
-        loss_sum = 0
+        L1Sum = 0
 
         for _, data in enumerate(trainLoader):
-            inMask, inPara, targets, _ = data
-            inMask, inPara, targets = inMask.float().to(device), inPara.float().to(device), targets.float().to(device)
+            inMap, inVec, targets, _ = data
+            inMap, inVec, targets = inMap.float().to(device), inVec.float().to(device), targets.float().to(device)
 
             optimizer.zero_grad()
-            predictions = network(inMask, inPara)
+            predictions = network(inMap, inVec)
             
             loss = criterion(predictions, targets)
             loss.backward()
-            loss_sum += loss.item()
+            L1Sum += loss.item()
 
             optimizer.step()
-        lossTrain = loss_sum / len(trainLoader)
+        L1Train = L1Sum / len(trainLoader)
 
         if scheduler : scheduler.step()
-        loss_val_sum = 0
+        L1ValSum = 0
         network.eval()
         with torch.no_grad():
             for i, data in enumerate(valLoader):
-                inMask, inPara, targets, _ = data
-                inMask, inPara, targets = inMask.float().to(device), inPara.float().to(device), targets.float().to(device)
-                predictions = network(inMask, inPara)
+                inMap, inVec, targets, _ = data
+                inMap, inVec, targets = inMap.float().to(device), inVec.float().to(device), targets.float().to(device)
+                predictions = network(inMap, inVec)
             
                 loss = criterion(predictions, targets)
-                loss_val_sum += loss.item()
+                L1ValSum += loss.item()
         
         
-        lossVal = loss_val_sum / len(valLoader)
+        L1Val = L1ValSum / len(valLoader)
 
         logLine = f'Epoch {epoch+1:04d} finished | Time duration : {(time.time()-shortPeriodTime):.2f} seconds\n'
         shortPeriodTime = time.time()
-        logLine += f'Traning loss : {lossTrain:.4f} | Validation loss : {lossVal:.4f}'
+        logLine += f'Traning L1 : {L1Train:.4f} | Validation L1 : {L1Val:.4f}'
         print(logLine)
         print('-'*30)
 
-        lossHistoryWriter.add_scalars('Loss', {'Train' : lossTrain, 'Validation' : lossVal}, epoch+1)
+        lossHistoryWriter.add_scalars('L1', {'Train' : L1Train, 'Validation' : L1Val}, epoch+1)
 
     totalTime = (time.time()-startTime)/60
     print(f'Training completed | Total time duration : {totalTime:.2f} minutes')
     torch.save(network, f'model/AIP/{count}')
-       
+
+def trainAeroConverter():
+    shortPeriodTime= startTime = time.time()
+    for epoch in range(epochs):
+        print(f'Starting epoch {epoch+1}/{epochs}')
+        network.train()
+        L1Sum = BCESum = 0
+
+        for _, data in enumerate(trainLoader):
+            inMap, inVec, targets, binaryMask = data
+            inMap, inVec, targets, binaryMask = inMap.float().to(device), inVec.float().to(device), targets.float().to(device), binaryMask.float().to(device)
+
+            optimizer.zero_grad()
+            mapPredictions, binaryMaskPrediction = network(inMap, inVec)
+            
+            L1 = criterion(mapPredictions, targets)
+            L1Sum += L1.item()
+
+            BCE = criterionBinaryMask(binaryMaskPrediction, binaryMask)
+            BCESum += BCE.item()
+
+            lossTotal = L1 + BCE
+            lossTotal.backward()
+
+            optimizer.step()
+
+        L1Train = L1Sum / len(trainLoader)
+        BCETrain = BCESum / len(trainLoader)
+        TotalTrain = L1Train + BCETrain
+
+        if scheduler : scheduler.step()
+        L1ValSum = BCEValSum = 0
+        network.eval()
+        with torch.no_grad():
+            for _, data in enumerate(valLoader):
+                inMap, inVec, targets, binaryMask = data
+                inMap, inVec, targets, binaryMask = inMap.float().to(device), inVec.float().to(device), targets.float().to(device), binaryMask.float().to(device)
+
+                mapPredictions, binaryMaskPrediction = network(inMap, inVec)
+            
+                L1 = criterion(mapPredictions, targets)
+                L1ValSum += L1.item()
+
+                BCE = criterionBinaryMask(binaryMaskPrediction, binaryMask)
+                BCEValSum += BCE.item()
+        
+        
+        L1Val = L1ValSum / len(valLoader)
+        BCEVal = BCEValSum / len(valLoader)
+        TotalVal = L1Val + BCEVal
+
+        logLine = f'Epoch {epoch+1:04d} finished | Time duration : {(time.time()-shortPeriodTime):.2f} seconds\n'
+        shortPeriodTime = time.time()
+        logLine += f'Traning L1 : {L1Train:.4f} | Validation L1 : {L1Val:.4f}\n'
+        logLine += f'Traning BCE : {BCETrain:.4f} | Validation BCE : {BCEVal:.4f}\n'
+        logLine += f'Traning Total Loss : {TotalTrain:.4f} | Validation Total Loss : {TotalVal:.4f}'
+        print(logLine)
+        print('-'*30)
+
+        lossHistoryWriter.add_scalars('L1', {'Train' : L1Train, 'Validation' : L1Val}, epoch+1)
+        lossHistoryWriter.add_scalars('BCE', {'Train' : BCETrain, 'Validation' : BCEVal}, epoch+1)
+        lossHistoryWriter.add_scalars('Total Loss', {'Train' : TotalTrain, 'Validation' : TotalVal}, epoch+1)
+
+    totalTime = (time.time()-startTime)/60
+    print(f'Training completed | Total time duration : {totalTime:.2f} minutes')
+    torch.save(network, f'model/AIP/{count}')
+
 if __name__ == '__main__':
     try :
-        train()
+        trainAeroConverter() if isinstance(network, AeroConverter) else trainAEorUnet()
     except Exception as e: 
         print(e)
         os.system(f'rm -rf {path}')

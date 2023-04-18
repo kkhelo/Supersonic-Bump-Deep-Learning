@@ -15,7 +15,7 @@ class AE(nn.Module):
     """
         Autoencoder with adjustable length and number of channels
     """
-    def __init__(self, inChannel, outChannel, channelBase : int, channelFactors : list(),inVectorLength : int,  
+    def __init__(self, inChannel, outChannel, channelBase : int, channelFactors : list(), inVectorLength : int,  
                  activation = nn.Tanh(), resolution : int = 256, bias : bool = True) -> None:
         """
             * inChannel, outChannel : Number of channels of input and output layer
@@ -30,7 +30,6 @@ class AE(nn.Module):
         super().__init__()
         
         bottlenackResolution = resolution // (2**len(channelFactors))
-        print('Resolution at bottle neck in this settings will be : ' ,bottlenackResolution)
 
         ########## Encoder ##########
         encoder = [DownsamplingBlock(inChannels=inChannel, outChannels=channelBase, bias=bias)]
@@ -82,7 +81,7 @@ class AE(nn.Module):
 
     def forward(self, inMap, inVec):
         
-        xMap = inMap
+        xMap = inMap.clone()
         # Encoder
         for block in self.encoder:
             xMap = block(xMap)

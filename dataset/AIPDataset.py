@@ -7,8 +7,12 @@ Date : 2023-03-20
 """
 
 import numpy as np
-import os, glob, scipy
-from .baseDataset import baseDataset
+import os, glob
+if __name__ == '__main__': 
+    from baseDataset import baseDataset
+else:
+    from .baseDataset import baseDataset
+
 
 class AIPDataset(baseDataset):
     """
@@ -32,8 +36,7 @@ class AIPDataset(baseDataset):
             
     """
     def __init__(self, dataDir: str, mode='TRAIN', caseList=None, res=256, ratio: float = 0.8, expandGradient = False) -> None:
-        super().__init__(dataDir, mode, caseList, res, ratio)
-        self.expandGradient = expandGradient
+        super().__init__(dataDir, mode, caseList, res, ratio, expandGradient)
 
     def loadData(self, dataList):
         
@@ -51,7 +54,6 @@ class AIPDataset(baseDataset):
         self.inVec = np.zeros((self._length, 5)) 
 
         for i in range(len(dataList)):
-            
             case = dataList[i]
 
             # bump surface
@@ -81,35 +83,6 @@ class AIPDataset(baseDataset):
 
             print(f'Loading -- {i+1:d}/{len(dataList)} completed')
 
-    def _calculateGradients(self, heightsMap):
-        """
-            Takes an input array of size (1, H, W) and calculates the
-            x-dir gradient, y-dir gradient and gradient magnitude using Sobel filters. 
-            Concatenate gradient channels to the inputs
-        """
-
-        heightsMapCopy = heightsMap.copy()
-
-        # Calculate the x-dir gradient using a Sobel filter
-        sobelX = np.array([[-1, 0, 1],
-                            [-2, 0, 2],
-                            [-1, 0, 1]])
-        # gradX = np.zeros((self.resolution,self.resolution))
-        gradX = scipy.ndimage.convolve(heightsMapCopy, sobelX)
-
-        # Calculate the y-dir gradient using a Sobel filter
-        sobelY = np.array([[-1, -2, -1],
-                            [ 0,  0,  0],
-                            [ 1,  2,  1]])
-        # gradY = np.zeros((1, self.resolution, self.resolution))
-        gradY = scipy.ndimage.convolve(heightsMapCopy, sobelY)
-
-        # Calculate the gradient magnitude using Euclidean distance
-        gradMag = np.sqrt(gradX**2 + gradY**2)
-
-        # Return [heightsMap, gradX, gradY, gradMag]
-        return np.array([heightsMapCopy, gradX, gradY, gradMag])
-
     def _getMean(self):
         self.inChannels = self.inMap.shape[1]
         self.tarChannels = self.targets.shape[1]
@@ -126,31 +99,12 @@ class AIPDataset(baseDataset):
                 self.tarOffset[j] += np.sum(self.targets[i,j])/(validPointAIP*self._length)
 
         print(f' Input offset : ', end='')
-        for i in range(self.inChannels) : print(self.inMap[i], end=' ')
+        for i in range(self.inChannels) : print(self.inOffset[i], end=' ')
         print()
 
         print(f' Target offset : ', end='')
         for i in range(self.tarChannels) : print(self.tarOffset[i], end=' ')
         print()
-
-    def _getNormFactor(self):
-        self.inNorm = np.zeros((self.inChannels))
-        self.tarNorm = np.zeros((self.tarChannels))
-
-        for i in range(self.inChannels):
-            self.inNorm[i] = np.max(np.abs(self.inMap[:,i,:,:]))
-
-        for i in range(self.tarChannels):
-            self.tarNorm[i] = np.max(np.abs(self.targets[:,i,:,:]))
-
-        print(f' Input scale factor : ', end='')
-        for i in range(self.inChannels) : print(self.inNorm[i], end=' ')
-        print()
-
-        print(f' Target scale factor : ', end='')
-        for i in range(self.tarChannels) : print(self.tarNorm[i], end=' ')
-        print()
-
 
 class valAIPDataset(AIPDataset):
     """

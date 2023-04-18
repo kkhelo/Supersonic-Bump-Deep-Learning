@@ -3,7 +3,6 @@ name : networkBlock.py
 usage : U-Net block component implementation.
 author : Bo-Yuan You
 Date : 2023-03-02
-
 """
 
 import torch.nn as nn
@@ -52,7 +51,7 @@ class UpsamplingBlock(nn.Module):
         x = self.conv(x)
         x = self.bn(x)
         return self.actf(x)
-    
+
 
 class PAM(nn.Module):
     """ 
