@@ -3,7 +3,7 @@ import torch, time, os, sys, math
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from dataset.AIPDataset import AIPDataset, valAIPDataset
+from dataset.sliceDataset import sliceDataset, valSliceDataset
 from network.networkBlock import BottleneckLinear, GlobalEncoderCNN
 from network.UNet import UNet
 from network.AE import AE
@@ -15,7 +15,7 @@ from utils.helper import trainingRecord
 
 dataDir = 'data/trainingData'
 # dataDir = 'data/testingData'
-caseList = os.path.join(dataDir, 'caseList1.npz') 
+caseList = os.path.join(dataDir, 'caseListSlice1.npz') 
 scratch = True
 epochs = 3000
 batchSize = 16
@@ -28,8 +28,9 @@ lr = 0.0001
 # network = AE
 network = DimensionalUnet
 
+
 criterionPI = PIContinuityLoss
-# criterionPI = None
+criterionPI = None
 
 alpha = 0.5
 
@@ -65,22 +66,22 @@ bias = True
 activation = nn.Tanh()
 
 # ordering the model and
-path = 'log/SummaryWriterLog/AIP/1'
+path = 'log/SummaryWriterLog/slice/1'
 count = 1
 while os.path.exists(path):
-    path = f'log/SummaryWriterLog/AIP/{count+1:d}'
+    path = f'log/SummaryWriterLog/slice/{count+1:d}'
     count += 1
 
-dirName = f'result/AIP/net{count}'
+dirName = f'result/slice/net{count}'
 os.makedirs(dirName, exist_ok=True)
 
 ######## Dataset settings ########
 
 # Dataset and the train loader declaration.
-dataset = AIPDataset(dataDir=dataDir, caseList=caseList, expandGradient=expandGradient)
+dataset = sliceDataset(dataDir=dataDir, caseList=caseList, expandGradient=expandGradient)
 dataset.preprocessing()
 trainLoader = DataLoader(dataset, batchSize, shuffle=True, drop_last=True)
-valDataset = valAIPDataset(dataset)
+valDataset = valSliceDataset(dataset)
 valDataset.preprocessing()
 valLoader = DataLoader(valDataset, batchSize, shuffle=False)
 
@@ -104,7 +105,7 @@ if scratch:
         network = DimensionalUnet(outChannel, channelBase, channelFactors, inVectorLength, 
                                   globalEncoder, bottleneck, activation, resolution, bias)
 else:
-    network = torch.load(f'model/AIP/{count-1}')
+    network = torch.load(f'model/slice/{count-1}')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')  
 network = network.to(device)
 
@@ -199,7 +200,7 @@ def train():
 
     totalTime = (time.time()-startTime)/60
     print(f'Training completed | Total time duration : {totalTime:.2f} minutes')
-    torch.save(network, f'model/AIP/{count}')
+    torch.save(network, f'model/slice/{count}')
 
 def trainPI():
     shortPeriodTime= startTime = time.time()
@@ -279,7 +280,7 @@ def trainPI():
 
     totalTime = (time.time()-startTime)/60
     print(f'Training completed | Total time duration : {totalTime:.2f} minutes')
-    torch.save(network, f'model/AIP/{count}')
+    torch.save(network, f'model/slice/{count}')
 
 
 if __name__ == '__main__':

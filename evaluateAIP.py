@@ -4,10 +4,12 @@ Each slice contains 6 flow properties : [p, p0, rho, Ux, Uy, Uz].
 
 """
 
-import torch, sys, os, glob
+import torch, sys, os, glob, json
 import torch.nn as nn, numpy as np, matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 from dataset.AIPDataset import AIPDataset, testAIPDataset
+from network.DimensionalUnet import DimensionalUnet
+from utils.networkInfo import countParameters
 
 
 ####### Settings ########
@@ -26,17 +28,15 @@ torch.set_num_threads(cpuMax)
 try:
     resultFolder = sys.argv[2]
 except:
-    resultFolder = glob.glob(f'result/AIP/net{count}_*')[0]
+    resultFolder = glob.glob(f'result/AIP/net{count}')[0]
 print(resultFolder)
 
-expandGradient = 'expandGradient' in resultFolder
-# Dataset directory.
-for info in resultFolder.split('_')[::-1]:
-    if 'trainingData' in info:
-        dataDir = os.path.join('data', info)
-        break
+expandGradient, dataDir = None, None
+with open(os.path.join(resultFolder, 'trainingInfo.json'), 'r') as of:
+    data = json.loads(of.read())
+    expandGradient = data['expandGradient']
+    dataDir = os.path.join('data', data['training dataset'])
 
-print(resultFolder, info, dataDir)
 caseList = os.path.join(dataDir, 'caseList1.npz')
 
 ########## Log settings ##########
@@ -56,28 +56,46 @@ def evaluate():
 
     network.eval()
     with torch.no_grad():
-        for i, data in enumerate(testLoader):
-            inMask, inPara, targets, binaryMask = data
-            inMask, inPara, targets = inMask.float().to(device), inPara.float().to(device), targets.float().to(device)
-            prediction = network(inMask, inPara)
+        if isinstance(network, DimensionalUnet):
+            print(network.__class__.__name__)
+            for i, data in enumerate(testLoader):
+                inMap, inVec, targets, binaryMask = data
+                inMap, inVec, targets, binaryMask = inMap.float().to(device), inVec.float().to(device), targets.float().to(device), binaryMask.float().to(device)
+                prediction = network(inMap, inVec, binaryMask).numpy().squeeze(0)
+                inMap, target, binaryMask = inMap.numpy().squeeze(0), targets.numpy().squeeze(0), binaryMask.numpy().squeeze(0)
+                np.savez(f'{dataList[i]}_nor', inMap=inMap, targets=target, prediction=prediction, inVec=inVec)
+                inMap, target, prediction = dataset.recover(inMap, target, prediction, binaryMask)
+                np.savez(f'{dataList[i]}', inMap=inMap, targets=target, prediction=prediction, inVec=inVec)
+        else:
+            print(network.__class__.__name__)
+            for i, data in enumerate(testLoader):
+                inMap, inVec, targets, binaryMask = data
+                inMap, inVec, targets, binaryMask = inMap.float().to(device), inVec.float().to(device), targets.float().to(device), binaryMask.float().to(device)
+                prediction = network(inMap, inVec).numpy().squeeze(0)
+                inMap, target, binaryMask = inMap.numpy().squeeze(0), targets.numpy().squeeze(0), binaryMask.numpy().squeeze(0)
+                np.savez(f'{dataList[i]}_nor', inMap=inMap, targets=target, prediction=prediction, inVec=inVec)
+                inMap, target, prediction = dataset.recover(inMap, target, prediction, binaryMask)
+                np.savez(f'{dataList[i]}', inMap=inMap, targets=target, prediction=prediction, inVec=inVec)
 
-            inMaskCopy, targetCopy, predictionCopy = inMask.numpy().squeeze(0).copy(), targets.numpy().squeeze(0).copy(), prediction.numpy().squeeze(0).copy()
-            np.savez(f'{dataList[i]}_nor', inMasks=inMaskCopy, targets=targetCopy, prediction=predictionCopy)
-            binaryMask = binaryMask.squeeze(0)
-            dataset.recover(inMaskCopy, targetCopy, predictionCopy, binaryMask)
-            np.savez(f'{dataList[i]}', inMasks=inMaskCopy, targets=targetCopy, prediction=predictionCopy, inPara=inPara)
 
     makeDiffImages(len(testLoader), dataList) 
 
 def makeDiffImages(numberOfDemo : int = 1, dataList : list = []):
 
     flowProperties = ['p', 'p0', 'rho', 'Ux', 'Uy', 'Uz']
+    with open(os.path.join(resultFolder, 'networkInfo.txt'), 'w') as of:
+        of.write(repr(network))
+        of.write('\n\n' + '*'*60+ '\n\n')
+        table, totalNUm = countParameters(network)
+        of.write(str(table))
+        of.write('\n' + str(totalNUm) + '\n')
+
     for i in range(numberOfDemo):
 
         path = os.path.join(resultFolder, f'{dataList[i]}')
         if not os.path.exists(path) : os.mkdir(path)
         temp = np.load(f'{dataList[i]}.npz')
-        mask, targets, prediction, mach = temp['inMasks'], temp['targets'], temp['prediction'], temp['inPara'][0][0]
+        mask, targets, prediction, mach = temp['inMap'], temp['targets'], temp['prediction'], temp['inVec'][0][0]
 
         scaleFactors = [1e5, 1e5*(0.5*1.4*mach**2+1), 1.1614, mach*347.189, mach*347.189, mach*347.189]
 
@@ -152,7 +170,6 @@ def makeDiffImages(numberOfDemo : int = 1, dataList : list = []):
                 of.write(f' Ground max, min : {M1:.3f}, {m1:.3f}\n')
                 of.write(f' Prediction max, min : {M2:.3f}, {m2:.3f}\n')
                 
-
                 plt.figure()
                 plt.contourf(temp, levels=200, cmap='Greens')
                 plt.colorbar()

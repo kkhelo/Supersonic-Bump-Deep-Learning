@@ -8,7 +8,7 @@ Date : 2023-03-02
 
 import torch.nn as nn
 import torch
-from .networkBlock import DownsamplingBlock, UpsamplingBlock
+from .networkBlock import DownsamplingBlock, UpsamplingBlock, BottleneckLinear
 
 
 class UNet(nn.Module):
@@ -45,19 +45,13 @@ class UNet(nn.Module):
         vectorBlock.append(nn.Linear(inVectorLength, channelBase, bias=bias))
         vectorBlock.append(nn.BatchNorm1d(channelBase))
         vectorBlock.append(nn.ReLU(inplace=True))
+        nn.init.kaiming_uniform_(vectorBlock[0].weight, mode='fan_in', nonlinearity='relu')
         
         # Bottleneck
-        bottleneck = []
         bottleneckInChannels = channelBase*channelFactors[-1]+channelBase
         bottleneckOutChannels = channelBase*channelFactors[-1]
-        bottleneck.append(nn.Linear(bottleneckInChannels, bottleneckOutChannels, bias=bias))
-        bottleneck.append(nn.BatchNorm1d(bottleneckOutChannels))
-        bottleneck.append(nn.ReLU(inplace=True))
-
-        # VectorBlock and bottleneck weight initializtion
-        nn.init.kaiming_uniform_(vectorBlock[0].weight, mode='fan_in', nonlinearity='relu')
-        nn.init.kaiming_uniform_(bottleneck[0].weight, mode='fan_in', nonlinearity='relu')
-
+        bottleneck = BottleneckLinear(bottleneckInChannels, bottleneckOutChannels, bias)
+        
         ########## Decoder ##########
 
         # Reshape the feature advance to decode
@@ -102,7 +96,7 @@ class UNet(nn.Module):
         ########## Create sequential object ##########
         self.encoder = nn.Sequential(*encoder)
         self.vectorBlock = nn.Sequential(*vectorBlock)
-        self.bottleneck = nn.Sequential(*bottleneck)
+        self.bottleneck = bottleneck
         self.decoder = nn.Sequential(*decoder)
         self.finalBlock = nn.Sequential(*finalBlock)
 
@@ -115,14 +109,10 @@ class UNet(nn.Module):
         for block in self.encoder[1:]:
             encoderFeatures.append(xMap.clone())
             xMap = block(xMap)
-            
-        size = xMap.size()
 
-        # Bottleneck
-        xMap = xMap.view(size[0], -1)
+        # Bottleneck and vectorBlock
         xVec = self.vectorBlock(inVec)
-        xMap = self.bottleneck(torch.cat([xMap, xVec], dim=1))
-        xMap = xMap.view(size)
+        xMap = self.bottleneck(xMap, xVec)
 
         # Decoder layer
         xMap = self.decoder[0](xMap)

@@ -8,7 +8,7 @@ Date : 2023-04-15
 
 import torch.nn as nn
 import torch
-from .networkBlock import DownsamplingBlock, UpsamplingBlock
+from .networkBlock import DownsamplingBlock, UpsamplingBlock, BottleneckLinear
 
 
 class AE(nn.Module):
@@ -45,18 +45,12 @@ class AE(nn.Module):
         vectorBlock.append(nn.Linear(inVectorLength, channelBase, bias=bias))
         vectorBlock.append(nn.BatchNorm1d(channelBase))
         vectorBlock.append(nn.ReLU(inplace=True))
+        nn.init.kaiming_uniform_(vectorBlock[0].weight, mode='fan_in', nonlinearity='relu')
 
         # Bottleneck
-        bottleneck = []
         bottleneckInChannels = channelBase*channelFactors[-1]+channelBase
         bottleneckOutChannels = channelBase*channelFactors[-1]
-        bottleneck.append(nn.Linear(bottleneckInChannels, bottleneckOutChannels, bias=bias))
-        bottleneck.append(nn.BatchNorm1d(bottleneckOutChannels))
-        bottleneck.append(nn.ReLU(inplace=True))
-
-        # VectorBlock and bottleneck weight initializtion
-        nn.init.kaiming_uniform_(vectorBlock[0].weight, mode='fan_in', nonlinearity='relu')
-        nn.init.kaiming_uniform_(bottleneck[0].weight, mode='fan_in', nonlinearity='relu')
+        bottleneck = BottleneckLinear(bottleneckInChannels, bottleneckOutChannels, bias)
         
         ########## Decoder ##########
 
@@ -76,26 +70,38 @@ class AE(nn.Module):
         ########## Create sequential object ##########
         self.encoder = nn.Sequential(*encoder)
         self.vectorBlock = nn.Sequential(*vectorBlock)
-        self.bottleneck = nn.Sequential(*bottleneck)
+        self.bottleneck = bottleneck
         self.decoder = nn.Sequential(*decoder)
 
     def forward(self, inMap, inVec):
-        
+
         xMap = inMap.clone()
         # Encoder
         for block in self.encoder:
             xMap = block(xMap)
-        
-        size = xMap.size()
 
-        # Bottleneck
-        xMap = xMap.view(size[0], -1)
+        # Bottleneck and vectorBlock
         xVec = self.vectorBlock(inVec)
-        xMap = self.bottleneck(torch.cat([xMap, xVec], dim=1))
-        xMap = xMap.view(size)
+        xMap = self.bottleneck(xMap, xVec)
 
         # Decoder 
         for block in self.decoder:
             xMap = block(xMap)
 
         return xMap
+
+
+class ConverterAE(AE):
+    """
+        Modified Autoencoder that remove batch normalization and activation.
+    """
+    def __init__(self, inChannel, outChannel, channelBase: int, channelFactors: list(), inVectorLength: int, 
+                 activation = nn.Identity(), resolution: int = 256, bias: bool = True) -> None:
+        super().__init__(inChannel, outChannel, channelBase, channelFactors, inVectorLength, nn.Identity(), resolution, bias)
+        self.decoder.pop(-1)
+        self.decoder.add_module('UpsampleLast', nn.UpsamplingBilinear2d(scale_factor=2))
+
+        conv = nn.Conv2d(channelBase*channelFactors[0], outChannel, kernel_size=3, stride=1, padding=1, bias=bias)
+        nn.init.kaiming_uniform_(conv.weight, mode='fan_in', nonlinearity='linear')
+
+        self.decoder.add_module('ConvLast', conv)

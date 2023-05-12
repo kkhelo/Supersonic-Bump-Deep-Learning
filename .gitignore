@@ -9,8 +9,15 @@ model
 
 # Test
 **/test.py
-test*.py
+test.*
 test
+
+# ipynb
+*.ipynb
+
+# binary mask test
+trainingBM.py
+evaluateBM.py
 
 # evlauation data
 result/

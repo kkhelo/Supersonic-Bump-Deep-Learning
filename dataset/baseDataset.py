@@ -7,7 +7,7 @@ Date : 2023-02-21
 """
 
 import numpy as np
-import glob, os, time, scipy
+import glob, os, time, scipy, torch
 from torch.utils.data import Dataset
 
 
@@ -64,37 +64,36 @@ class baseDataset(Dataset):
                     for case in temp :
                         self.__trainList.append(str(case))
                     self._dataList = self.__trainList
-                    return
             except:
                 raise ValueError(f'Unkown case list {self.caseList}, should be a path to the list file.')
+        else:
+            geometry = glob.glob(os.path.join(self.dataDir, '*'))
+            caseList = []
+            for geo in geometry :
+                cases = glob.glob(os.path.join(geo, '*'))
+                for case in cases:
+                    if os.listdir(case):
+                        caseList.append(case)
 
-        geometry = glob.glob(os.path.join(self.dataDir, '*'))
-        caseList = []
-        for geo in geometry :
-            cases = glob.glob(os.path.join(geo, '*'))
-            for case in cases:
-                if os.listdir(case):
-                    caseList.append(case)
+            # Split data
+            length = len(caseList)
+            np.random.shuffle(caseList)
+            sepPoint = int(length*self.ratio)
 
-        # Split data
-        length = len(caseList)
-        np.random.shuffle(caseList)
-        sepPoint = int(length*self.ratio)
+            self.__trainList = caseList[:sepPoint+1]
+            self.__valList = caseList[sepPoint+1:]
+            ratio = np.array([self.ratio])
 
-        self.__trainList = caseList[:sepPoint+1]
-        self.__valList = caseList[sepPoint+1:]
-        ratio = np.array([self.ratio])
-
-        # Save fileList with non-repeat name to base directory
-        count = 1
-        temp = os.path.join(self.dataDir, 'caseList1.npz')
-        while os.path.exists(temp):
-            count += 1
-            temp = os.path.join(self.dataDir, f'caseList{count}.npz')
-            
-        np.savez_compressed(temp, tra=self.__trainList, val=self.__valList, ratio=ratio)
-        self._dataList = self.__trainList
-        self.caseList = temp
+            # Save fileList with non-repeat name to base directory
+            count = 1
+            temp = os.path.join(self.dataDir, 'caseList1.npz')
+            while os.path.exists(temp):
+                count += 1
+                temp = os.path.join(self.dataDir, f'caseList{count}.npz')
+                
+            np.savez_compressed(temp, tra=self.__trainList, val=self.__valList, ratio=ratio)
+            self._dataList = self.__trainList
+            self.caseList = temp
 
     def preprocessing(self):
         
@@ -263,11 +262,13 @@ class baseDataset(Dataset):
                 tarOffsetMapToMultiplyBack[np.where(self.binaryMask[i,0]==1)] *= self.tarNorm[j]
                 self.targets[i,j] *= tarOffsetMapToMultiplyBack
 
-    def recover(self, inMapCopy, targetsCopy, predCopy, binaryMask):
+    def recover(self, inMap, targets, pred, binaryMask):
         """
         function use to recover true data from normalized data
         size : (channels, H, W)
         """
+
+        inMapCopy, targetsCopy, predCopy = inMap.copy(), targets.copy(), pred.copy()
 
         for i in range(self.inChannels):
             inMapCopy[i] *= self.inNorm[i]
@@ -290,6 +291,37 @@ class baseDataset(Dataset):
 
             targetsCopy[i] += tarOffsetMap
             predCopy[i] += tarOffsetMap
+
+        return inMapCopy, targetsCopy, predCopy
+
+    def recoverTensor(self, inMap, targets, pred, binaryMask):
+        """
+        recovery method for tensor data type
+        """
+        
+        device = inMap.device
+        inMapCopy, targetsCopy, predCopy = inMap.clone(), targets.clone(), pred.clone()
+
+        # input
+        inNormTensor = torch.tensor(self.inNorm, device=device).view((1,self.inChannels,1,1)).expand_as(inMapCopy)
+        inOffsetTensor = torch.tensor(self.inOffset, device=device).view((1,self.inChannels,1,1)).expand_as(inMapCopy)
+
+        inMapCopy = inMapCopy * inNormTensor + inOffsetTensor
+
+
+        # output and targets
+        tarNormTensor = torch.tensor(self.tarNorm, device=device).view((1,self.tarChannels,1,1)).expand_as(targetsCopy)
+        tarOffsetTensor = torch.tensor(self.tarOffset, device=device).view((1,self.tarChannels,1,1)).expand_as(targetsCopy)
+
+        mask = torch.broadcast_to(binaryMask, targetsCopy.shape).eq(0)
+        tarNormMap = torch.where(mask, tarNormTensor, torch.ones_like(targetsCopy))
+        tarOffsetMap = torch.where(mask, tarOffsetTensor, torch.zeros_like(targetsCopy))
+
+        targetsCopy = targetsCopy * tarNormMap + tarOffsetMap
+        predCopy = predCopy * tarNormMap + tarOffsetMap
+
+        return inMapCopy, targetsCopy, predCopy
+
 
 class valBaseDataset(baseDataset):
     """

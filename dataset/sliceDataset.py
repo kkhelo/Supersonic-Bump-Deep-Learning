@@ -14,9 +14,9 @@ else:
     from .baseDataset import baseDataset
 
 
-class AIPDataset(baseDataset):
+class sliceDataset(baseDataset):
     """
-        Derived class for single AIP data.
+        Derived class for slice data.
         This base class provide : 
             1. basic preprocessing method (package as preprocessing())
             2. recover true value function (recover())
@@ -38,13 +38,60 @@ class AIPDataset(baseDataset):
     def __init__(self, dataDir: str, mode='TRAIN', caseList=None, res=256, ratio: float = 0.8, expandGradient = False) -> None:
         super().__init__(dataDir, mode, caseList, res, ratio, expandGradient)
 
+    def _getDataList(self) -> None:
+        print('Start training dataset procedure : ')
+
+        if self.caseList: 
+            temp = np.load(self.caseList, allow_pickle=True)
+            if temp['ratio'][0] == self.ratio : 
+                try :
+                    self._dataList = temp['tra']
+                    self._dictKey = temp['dictKey']
+                    # self.__trainList = []
+                    # for case in temp :
+                    #     self.__trainList.append(str(case))
+                    # self._dataList = self.__trainList
+                    return
+                except:
+                    raise ValueError(f'Unkown case list {self.caseList}, should be a path to the list file.')
+                
+
+        cases = glob.glob(os.path.join(self.dataDir, '*/*/*'))
+        caseList = []
+        nSlice = np.load(os.path.join(cases[0], 'sliceData.npz'))['sliceData'].shape[0]
+
+        for case in cases:
+            for i in range(nSlice):
+                caseList.append((case, i))
+
+        # Split data
+        length = len(caseList)
+        np.random.shuffle(caseList)
+        sepPoint = int(length*self.ratio)
+
+        self.__trainList = np.array(caseList[:sepPoint+1], dtype=object)
+        self.__valList = np.array(caseList[sepPoint+1:], dtype=object)
+        ratio = np.array([self.ratio])
+
+        # Save fileList with non-repeat name to base directory
+        count = 1
+        temp = os.path.join(self.dataDir, 'caseListSlice1.npz')
+        while os.path.exists(temp):
+            count += 1
+            temp = os.path.join(self.dataDir, f'caseListSlice{count}.npz')
+            
+        np.savez_compressed(temp, tra=self.__trainList, val=self.__valList, dictKey=np.array(cases), ratio=ratio)
+        self._dataList = self.__trainList
+        self._dictKey = cases
+        self.caseList = temp
+
     def loadData(self, dataList):
         
         self._length = len(dataList)
-
+        
         # Check if resolution is correct or not
-        src = os.path.join(dataList[0], os.listdir(dataList[0])[0], 'AIPData.npz')
-        temp = np.load(src)['AIPData']
+        src = os.path.join(dataList[0][0], 'sliceData.npz')
+        temp = np.load(src)['sliceData']
         if temp.shape[-1] - self.resolution:
             raise ValueError(f"Resolution doesn't math\t\n CFD data : {temp.shape[0]}\t\n Given value : {self.resolution}")
         
@@ -53,35 +100,42 @@ class AIPDataset(baseDataset):
         self.targets = np.zeros((self._length, temp.shape[1], self.resolution, self.resolution))
         self.inVec = np.zeros((self._length, 5)) 
 
-        for i in range(len(dataList)):
-            case = dataList[i]
+        i = 0
+        for case in self._dictKey:
+            # number of slices
+            slices = sorted(dataList[np.where(dataList[:,0] == case),1][0])
+            # speed up validation load data process
+            if len(slices) == 0 : continue
 
             # bump surface
-            bumpSurfaceData = np.load(os.path.join(case, os.listdir(case)[0], 'bumpSurfaceData.npz'))
-            heights = bumpSurfaceData['heights']
-            self.inMap[i, :] = self._calculateGradients(heights) if self.expandGradient else heights
+            heights = np.load(os.path.join(case, 'bumpSurfaceData.npz'))['heights']
 
-            # AIP data
-            AIPData = np.load(os.path.join(case, os.listdir(case)[0], 'AIPData.npz'))
-            data, tag, mask = AIPData['AIPData'], AIPData['AIPTags'], AIPData['geoMask']
-            tag = np.where(tag=='AIP')[0][0]
-            self.binaryMask[i, 0] = mask[tag]
-            self.targets[i] = data[tag]
-
-            # Extract flow conditions
-            temp = case.split('/')
-            Mach = float(temp[-1])
-
-            # Extract AIP x coordinate
-            locationAIP = np.where(heights == np.max(heights))[0][0]*(0.5/self.resolution)
-
-            temp = temp[-2].split('_')
-            k, c, d = float(temp[0].split('k')[-1]), float(temp[1].split('c')[-1]), float(temp[2].split('d')[-1])
+            # slice data for given cfd case 
+            sliceData = np.load(os.path.join(case, 'sliceData.npz'))
+            data, xCoor, mask = sliceData['sliceData'], sliceData['xCoor'], sliceData['geoMask']
             
-            # [Mach, AIP Location(x), k, c, d]
-            self.inVec[i] = np.array([Mach, locationAIP, k, c, d])
+            
+            for iSlice in slices:
+            
+                self.inMap[i, :] = self._calculateGradients(heights) if self.expandGradient else heights
 
-            print(f'Loading -- {i+1:d}/{len(dataList)} completed')
+                # slice data
+                self.binaryMask[i, 0] = mask[iSlice]
+                self.targets[i] = data[iSlice]
+
+                # extract flow conditions
+                temp = case.split('/')
+                Mach = float(temp[-2])
+
+                # extract geometry parameters
+                temp = temp[-3].split('_')
+                k, c, d = float(temp[0].split('k')[-1]), float(temp[1].split('c')[-1]), float(temp[2].split('d')[-1])
+                
+                # [Mach, x corrdinate, k, c, d]
+                self.inVec[i] = np.array([Mach, xCoor[iSlice], k, c, d])
+
+                print(f'Loading -- {i+1:d}/{len(dataList)} completed')
+                i += 1
 
     def _getMean(self):
         self.inChannels = self.inMap.shape[1]
@@ -106,7 +160,7 @@ class AIPDataset(baseDataset):
         for i in range(self.tarChannels) : print(self.tarOffset[i], end=' ')
         print()
 
-class valAIPDataset(AIPDataset):
+class valSliceDataset(sliceDataset):
     """
         Validation base dataset derived from AIP dataset
         This base class provide : 
@@ -123,7 +177,7 @@ class valAIPDataset(AIPDataset):
             trainDataset : train dataset class object 
     """
 
-    def __init__(self, trainDataset:AIPDataset) -> None:
+    def __init__(self, trainDataset:sliceDataset) -> None:
         super().__init__(dataDir=trainDataset.dataDir, mode='VAL', caseList=trainDataset.caseList, 
                          res=trainDataset.resolution, expandGradient=trainDataset.expandGradient)
         self.inNorm = trainDataset.inNorm
@@ -136,14 +190,11 @@ class valAIPDataset(AIPDataset):
     def _getDataList(self) -> None:
         print('Start validation dataset procedure : ')
 
-        temp = np.load(self.caseList)['val']
-        self.__valList = []
-        for case in temp :
-            self.__valList.append(str(case))
-        self._dataList = self.__valList
+        temp = np.load(self.caseList, allow_pickle=True)
+        self._dataList = temp['val']
+        self._dictKey = temp['dictKey']
 
-
-class testAIPDataset(AIPDataset):
+class testSliceDataset(sliceDataset):
     """
         Validation base dataset derived from AIP dataset
         This base class provide : 
@@ -160,7 +211,7 @@ class testAIPDataset(AIPDataset):
             trainDataset : train dataset class object 
             dataDir : test dataset root directory
     """
-    def __init__(self, testDataDir, trainDataset:AIPDataset) -> None:
+    def __init__(self, testDataDir, trainDataset:sliceDataset) -> None:
         super().__init__(dataDir=testDataDir, mode='TEST', caseList=None, 
                          res=trainDataset.resolution, expandGradient=trainDataset.expandGradient)
         self.inNorm = trainDataset.inNorm
@@ -173,82 +224,38 @@ class testAIPDataset(AIPDataset):
     def _getDataList(self) -> None:
         print('Start testing dataset procedure : ')
 
-        geometry = glob.glob(os.path.join(self.dataDir, '*'))
+        cases = glob.glob(os.path.join(self.dataDir, '*/*/*'))
         caseList = []
-        for geo in geometry :
-            caseList += glob.glob(os.path.join(geo, '*'))
+        nSlice = np.load(os.path.join(cases[0], 'sliceData.npz'))['sliceData'].shape[0]
 
-        self._dataList = caseList
+        for case in cases:
+            for i in range(nSlice):
+                caseList.append((case, i))
+
+        self._dataList = np.array(caseList, dtype=object)
+        self._dictKey = np.array(cases)
         
 
 if __name__ == '__main__':
     import sys
     sys.path.append('dataset')
 
-    caseList='data/trainingData/caseList1.npz'
-    expandGradient = True
+    caseList='data/trainingData/caseListSlice1.npz'
+    expandGradient = False
     # caseList=None
-    tra = AIPDataset('data/trainingData', caseList=caseList, res=256, expandGradient=expandGradient)
+    tra = sliceDataset('data/trainingData', caseList=caseList, res=256, 
+                       expandGradient=expandGradient, ratio=0.9)
     tra.preprocessing()
-    val = valAIPDataset(tra)
+    # tra._getDataList()
+    # tra.loadData(tra._dataList)
+
+    val = valSliceDataset(tra)
     val.preprocessing()
 
-    index = 48
-    physics = 2
+    print(tra.targets.shape)
+    print(val.targets.shape)
 
-    inMap, _, targets, binaryMask = val[index]
-    print(inMap.shape, targets.shape, binaryMask.shape)
+    np.savez('tra', inMap=tra.inMap, tar=tra.targets, bm=tra.binaryMask)
+    np.savez('val', inMap=val.inMap, tar=val.targets, bm=val.binaryMask)
     
-    inMapCopy, targetsCopy, predCopy = inMap.copy(), targets.copy(), targets.copy()
-    val.recover(inMapCopy, targetsCopy, predCopy, binaryMask)
-
-    print(val.inVec[index])
-
-    import matplotlib.pyplot as plt
-
-    plt.figure()
-    plt.pcolormesh(inMap[0].transpose(), cmap='Greys')
-    plt.colorbar()
-    plt.savefig('heightMap')
-    plt.close()
-
-    plt.figure()
-    plt.pcolormesh(inMap[1].transpose(), cmap='Greys')
-    plt.colorbar()
-    plt.savefig('gradX')
-    plt.close()
-
-    plt.figure()
-    plt.pcolormesh(inMap[2].transpose(), cmap='Greys')
-    plt.colorbar()
-    plt.savefig('gradY')
-    plt.close()
-
-    plt.figure()
-    plt.pcolormesh(inMap[3].transpose(), cmap='Greys')
-    plt.colorbar()
-    plt.savefig('gradMag')
-    plt.close()
-
-    #####
-
-    plt.figure()
-    plt.pcolormesh(targets[physics].transpose(), cmap='Reds')
-    plt.colorbar()
-    plt.savefig('nor')
-    plt.close()
-
-    plt.figure()
-    plt.pcolormesh(targetsCopy[physics].transpose(), cmap='Reds')
-    plt.colorbar()
-    plt.savefig('denor')
-    plt.close()    
-
-    temp = glob.glob(os.path.join(val._dataList[index], '*/AIPData.npz'))
-    temp = np.load(temp[0])['AIPData']
     
-    plt.figure()
-    plt.pcolormesh(temp[0][physics].transpose(), cmap='Reds')
-    plt.colorbar()
-    plt.savefig('ground')
-    plt.close()

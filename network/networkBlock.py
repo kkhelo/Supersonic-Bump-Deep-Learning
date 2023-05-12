@@ -146,3 +146,67 @@ class CAM(nn.Module):
         out = self.gamma*out + x
         
         return out
+    
+
+class GlobalEncoderCNN(nn.Module):
+    """
+        GlobalEncoderCNN with adjustable length and number of channels. This module is specifically designed for AeroConverter
+    """
+    def __init__(self, inChannel, channelBase : int, channelFactors : list, 
+                 resolution : int = 256, bias : bool = True) -> None:
+        super().__init__()
+
+        bottlenackResolution = resolution // (2**len(channelFactors))
+
+        net = [DownsamplingBlock(inChannels=inChannel, outChannels=channelBase, bias=bias)]
+        for i in range(len(channelFactors)-1): 
+            net.append(DownsamplingBlock(inChannels=channelBase*channelFactors[i], outChannels=channelBase*channelFactors[i+1], bias=bias))
+        
+        # Make sure the size to be (1,1)
+        net.append(nn.AvgPool2d(kernel_size=bottlenackResolution) if bottlenackResolution != 1 else nn.Identity())
+
+        self.net = nn.Sequential(*net)
+
+    def forward(self, inMap):    
+        
+        xMap = inMap.clone()
+
+        for block in self.net : xMap = block(xMap)
+            
+        return xMap
+
+
+class BottleneckLinear(nn.Module):
+    """
+        Bottleneck module
+    """
+    def __init__(self, inChannels, outChannels, bias : bool = True) -> None:
+        """
+            * inChannel, outChannel : Number of channels of input and output layer
+            * bias : Whether to add bias term in convolution layer
+        """
+        super().__init__()
+
+        self.linear = nn.Linear(inChannels, outChannels, bias=bias)
+        self.bn = nn.BatchNorm1d(outChannels)
+        self.actf = nn.ReLU(inplace=True)
+
+        nn.init.kaiming_uniform_(self.linear.weight, mode='fan_in', nonlinearity='relu')
+
+    def forward(self, inMap, inVec):
+        # Resize inMap to 2D
+        size = inMap.size()
+        xMap = inMap.view(size[0], -1)
+
+        # Concatenate with inVec
+        xMap = torch.cat([xMap, inVec], dim=1)
+
+        xMap = self.linear(xMap)
+        xMap = self.bn(xMap)
+        xMap = self.actf(xMap)
+
+        # Resize back to 4D
+        out = xMap.view((size[0],-1,1,1))
+
+        return out
+    
